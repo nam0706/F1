@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -12,8 +13,33 @@ import pandas as pd
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
 
 
-def setup_logging(level: int = logging.INFO) -> None:
-    logging.basicConfig(level=level, format=LOG_FORMAT)
+def setup_logging(
+    level: int | str = logging.INFO,
+    log_file_path: Path | str | None = None,
+    log_to_file: bool = False,
+    retention_days: int = 14,
+) -> None:
+    resolved_level = getattr(logging, str(level).upper(), level)
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+
+    if log_to_file and log_file_path is not None:
+        path = Path(log_file_path)
+        ensure_dir(path.parent)
+        file_handler = TimedRotatingFileHandler(
+            path,
+            when="D",
+            interval=1,
+            backupCount=retention_days,
+            encoding="utf-8",
+        )
+        handlers.append(file_handler)
+
+    logging.basicConfig(
+        level=resolved_level,
+        format=LOG_FORMAT,
+        handlers=handlers,
+        force=True,
+    )
 
 
 def ensure_dir(path: Path) -> Path:

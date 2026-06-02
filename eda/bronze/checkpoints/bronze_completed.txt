@@ -1,0 +1,10 @@
+{
+  "status": "PROCEED_WITH_WARNINGS",
+  "timestamp": "2026-06-01T18:01:38.162079",
+  "p0_checks_passed": 6,
+  "p0_checks_total": 6,
+  "warning_count": 5,
+  "review_count": 7,
+  "failed_reports": [],
+  "next_step": "Proceed to Silver with documented mitigations"
+}

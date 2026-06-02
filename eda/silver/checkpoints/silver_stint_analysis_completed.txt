@@ -1,0 +1,11 @@
+{
+  "notebook": "11_stint_analysis",
+  "timestamp": "2026-06-02T02:14:31.010490",
+  "status": "PASS",
+  "stint_rows": 3254,
+  "lap_stint_rows": 63684,
+  "most_used_compound": "MEDIUM",
+  "most_used_compound_stints": 1451,
+  "top_stint_extension_driver": "Arvid LINDBLAD",
+  "top_driver_avg_stint_laps": 25.3
+}

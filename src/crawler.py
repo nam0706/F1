@@ -20,9 +20,11 @@ Kiến trúc:
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -37,17 +39,13 @@ logger = logging.getLogger(__name__)
 
 # ─── Endpoint definitions ─────────────────────────────────────────────────────
 # Telemetry: lưu Parquet vì dữ liệu mili-giây, rất lớn
-TELEMETRY_ENDPOINTS = {"car_data", "location"}
+DEFAULT_TELEMETRY_ENDPOINTS = {"car_data", "location"}
 
 # Tất cả endpoints thông thường (dữ liệu bảng, lưu CSV)
-NORMAL_ENDPOINTS = [
-    "meetings", "drivers", "laps", "stints", "position",
-    "intervals", "pit", "starting_grid", "race_control",
-    "weather", "session_result", "team_radio", "overtakes",
-]
+NORMAL_ENDPOINTS = []
 
 # Endpoints theo năm (không theo session_key)
-PER_YEAR_ENDPOINTS = {"championship_drivers", "championship_teams"}
+PER_YEAR_ENDPOINTS = {"meetings", "championship_drivers", "championship_teams"}
 
 
 # ─── Rate Limiter (Thread-safe) ───────────────────────────────────────────────
@@ -79,10 +77,6 @@ class RateLimiter:
             self._calls.append(time.time())
 
 
-# Khởi tạo rate limiter toàn cục (dùng chung giữa các thread)
-_rate_limiter = RateLimiter(max_calls=28, period=60.0)
-
-
 # ─── Skip Existing ────────────────────────────────────────────────────────────
 def _file_exists(raw_dir: Path, endpoint: str, year: int, session_key: int) -> bool:
     """Trả về True nếu file raw của endpoint này đã được tải về."""
@@ -93,21 +87,90 @@ def _file_exists(raw_dir: Path, endpoint: str, year: int, session_key: int) -> b
     return False
 
 
+def _should_skip_existing(config: PipelineConfig, endpoint: str, year: int, session_key: int) -> bool:
+    return config.resume_existing_files and _file_exists(config.raw_dir, endpoint, year, session_key)
+
+
+def _should_skip_existing_year(config: PipelineConfig, endpoint: str, year: int) -> bool:
+    return config.resume_existing_files and _year_file_exists(config.raw_dir, endpoint, year)
+
+
+def _reset_raw_dir_if_configured(config: PipelineConfig, dry_run: bool) -> None:
+    if not config.delete_raw_before_crawl:
+        return
+
+    preserve = set(config.raw_reset_preserve_endpoints)
+    config.raw_dir.mkdir(parents=True, exist_ok=True)
+    for endpoint_dir in config.raw_dir.iterdir():
+        if not endpoint_dir.is_dir() or endpoint_dir.name in preserve:
+            continue
+        if dry_run:
+            logger.info("[DryRun] Would delete raw endpoint directory: %s", endpoint_dir)
+        else:
+            shutil.rmtree(endpoint_dir)
+            logger.info("Deleted raw endpoint directory before crawl: %s", endpoint_dir)
+
+
+def _write_crawler_checkpoint(config: PipelineConfig, payload: dict) -> None:
+    if config.crawler_checkpoint_enabled:
+        write_json(payload, config.crawler_checkpoint_path)
+
+
+def _year_file_exists(raw_dir: Path, endpoint: str, year: int) -> bool:
+    dir_path = raw_dir / endpoint
+    for ext in ("csv", "parquet", "json"):
+        if (dir_path / str(year) / f"{endpoint}.{ext}").exists():
+            return True
+        if (dir_path / f"{year}.{ext}").exists():
+            return True
+        if (dir_path / str(year) / f"{year}.{ext}").exists():
+            return True
+    return False
+
+
+def _filter_completed_sessions(
+    sessions: list[dict],
+    include_future_sessions: bool,
+    completed_before_utc: str | None = None,
+) -> list[dict]:
+    if include_future_sessions:
+        return sessions
+    now = (
+        pd.to_datetime(completed_before_utc, errors="coerce", utc=True)
+        if completed_before_utc
+        else pd.Timestamp(datetime.now(timezone.utc))
+    )
+    if pd.isna(now):
+        now = pd.Timestamp(datetime.now(timezone.utc))
+    completed = []
+    for session in sessions:
+        date_start = pd.to_datetime(session.get("date_start"), errors="coerce", utc=True)
+        if pd.notna(date_start) and date_start <= now:
+            completed.append(session)
+    return completed
+
+
 # ─── Fetch Functions ──────────────────────────────────────────────────────────
 def _fetch_api(
-    base_url: str, endpoint: str, params: dict, retries: int = 3
+    config: PipelineConfig,
+    endpoint: str,
+    params: dict,
+    rate_limiter: RateLimiter,
 ) -> Optional[List[dict]]:
     """
     Gọi OpenF1 REST API với retry + rate limiting.
     Trả về list[dict] hoặc None nếu thất bại.
     """
-    url = f"{base_url}/{endpoint}"
+    url = f"{config.base_url}/{endpoint}"
+    retries = config.max_retries
     for attempt in range(retries):
         try:
-            _rate_limiter.wait()
-            response = requests.get(url, params=params, timeout=60)
+            rate_limiter.wait()
+            response = requests.get(url, params=params, timeout=config.timeout_seconds)
+            if config.sleep_seconds > 0:
+                time.sleep(config.sleep_seconds)
             if response.status_code == 429:
-                wait = (attempt + 1) * 10
+                wait = config.retry_wait_seconds
                 logger.warning(f"  [429] Rate limited on {endpoint}. Chờ {wait}s...")
                 time.sleep(wait)
                 continue
@@ -116,7 +179,7 @@ def _fetch_api(
             return data if data else None
         except Exception as exc:
             if attempt < retries - 1:
-                time.sleep(3)
+                time.sleep(config.retry_wait_seconds)
                 continue
             logger.error(f"  [FAIL] {endpoint}: {exc}")
             return None
@@ -179,7 +242,7 @@ def _save(
     endpoint: str,
     year: int,
     session_key: int,
-    raw_dir: Path,
+    config: PipelineConfig,
     dry_run: bool = False,
 ) -> None:
     """Lưu dữ liệu đã tải về disk. Telemetry → Parquet (zstd), còn lại → CSV."""
@@ -187,28 +250,51 @@ def _save(
         logger.info(f"  [DryRun] Would save {len(data):,} rows → {endpoint}/{year}/{session_key}")
         return
 
-    is_tele = endpoint in TELEMETRY_ENDPOINTS
-    ext = "parquet" if is_tele else "csv"
-    path = raw_dir / endpoint / str(year) / f"{session_key}.{ext}"
+    is_tele = endpoint in DEFAULT_TELEMETRY_ENDPOINTS
+    ext = config.telemetry_format if is_tele else "csv"
+    if is_tele and ext != "parquet":
+        raise ValueError(f"Unsupported telemetry_format={ext!r}; only parquet is currently supported.")
+    path = config.raw_dir / endpoint / str(year) / f"{session_key}.{ext}"
     path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         df = pd.DataFrame(data)
         if is_tele:
-            df.to_parquet(path, index=False, compression="zstd")
+            df.to_parquet(path, index=config.csv_index, compression=config.telemetry_compression)
         else:
-            df.to_csv(path, index=False)
+            df.to_csv(path, index=config.csv_index, encoding=config.csv_encoding)
         logger.info(f"  ✓ {endpoint}/{year}/{session_key}.{ext}  ({len(data):,} rows)")
     except Exception as exc:
         logger.error(f"  ✗ Save failed {path}: {exc}")
 
 
 # ─── Per-Endpoint Worker (dùng trong ThreadPoolExecutor) ─────────────────────
+def _save_year(
+    data: List[dict],
+    endpoint: str,
+    year: int,
+    config: PipelineConfig,
+    dry_run: bool = False,
+) -> None:
+    if dry_run:
+        logger.info(f"  [DryRun] Would save {len(data):,} rows -> {endpoint}/{year}/{endpoint}.csv")
+        return
+
+    path = config.raw_dir / endpoint / str(year) / f"{endpoint}.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        pd.DataFrame(data).to_csv(path, index=config.csv_index, encoding=config.csv_encoding)
+        logger.info(f"  Saved {endpoint}/{year}/{endpoint}.csv ({len(data):,} rows)")
+    except Exception as exc:
+        logger.error(f"  Save failed {path}: {exc}")
+
+
 def _fetch_and_save_one(
     endpoint: str,
     session: dict,
     year: int,
     config: PipelineConfig,
+    rate_limiter: RateLimiter,
     dry_run: bool,
 ) -> tuple[str, bool]:
     """
@@ -220,7 +306,7 @@ def _fetch_and_save_one(
     meeting_name = session.get("meeting_name", "")
 
     # Skip nếu file đã tồn tại
-    if _file_exists(config.raw_dir, endpoint, year, session_key):
+    if _should_skip_existing(config, endpoint, year, session_key):
         logger.info(f"  [SKIP] {endpoint} [{session_key}] — already exists")
         return endpoint, True
 
@@ -233,9 +319,9 @@ def _fetch_and_save_one(
     else:
         params = {"session_key": session_key}
 
-    data = _fetch_api(config.base_url, endpoint, params)
+    data = _fetch_api(config, endpoint, params, rate_limiter)
     if data:
-        _save(data, endpoint, year, session_key, config.raw_dir, dry_run)
+        _save(data, endpoint, year, session_key, config, dry_run)
         return endpoint, True
     else:
         logger.warning(f"  [NO DATA] {endpoint} [{session_key}]")
@@ -245,8 +331,8 @@ def _fetch_and_save_one(
 # ─── Main Orchestrator ────────────────────────────────────────────────────────
 def run_crawler(
     config_path: str | None = None,
-    dry_run: bool = False,
-    max_workers: int = 4,
+    dry_run: bool | None = None,
+    max_workers: int | None = None,
 ) -> dict:
     """
     Crawl toàn bộ dữ liệu F1 theo cấu hình trong pipeline_config.yaml.
@@ -261,14 +347,58 @@ def run_crawler(
         dict chứa metadata của lần chạy (năm, số session, trạng thái).
     """
     config = load_config(config_path)
-    setup_logging()
+    setup_logging(
+        level=config.log_level,
+        log_file_path=config.log_file_path,
+        log_to_file=config.log_to_file,
+        retention_days=config.log_retention_days,
+    )
+    dry_run = config.dry_run_default if dry_run is None else dry_run
+    max_workers = config.crawler_max_workers if max_workers is None else max_workers
 
-    cache_dir = config.project_root / "data" / "fastf1_cache"
+    if config.freeze_existing_raw:
+        logger.info(
+            "Bronze snapshot is frozen; crawl step will not fetch new raw files. "
+            "Set sessions.freeze_existing_raw=false to backfill from OpenF1/FastF1."
+        )
+        metadata = {
+            "crawled_at": utc_now_iso(),
+            "years": list(range(config.start_year, config.end_year + 1)),
+            "total_sessions": 0,
+            "limit_sessions": config.limit_sessions,
+            "dry_run": dry_run,
+            "status": "frozen_existing_raw",
+        }
+        if not dry_run:
+            write_json(metadata, config.metadata_dir / "crawl_metadata.json")
+        return metadata
+
+    _reset_raw_dir_if_configured(config, dry_run)
+
+    cache_dir = config.fastf1_cache_dir
     cache_dir.mkdir(parents=True, exist_ok=True)
     fastf1.Cache.enable_cache(str(cache_dir))
+    rate_limiter = RateLimiter(
+        max_calls=config.rate_limit_max_calls,
+        period=config.rate_limit_period_seconds,
+    )
+    logger.info(
+        "API rate limit from config: %s request(s) per %.1f second(s); post-request sleep %.2fs",
+        config.rate_limit_max_calls,
+        config.rate_limit_period_seconds,
+        config.sleep_seconds,
+    )
 
     if dry_run:
         logger.warning("!!! DRY-RUN MODE: Không có file nào được lưu !!!")
+
+    telemetry_endpoints = set(config.telemetry_endpoints or DEFAULT_TELEMETRY_ENDPOINTS)
+    normal_endpoints = [
+        endpoint for endpoint in config.per_session_endpoints
+        if endpoint != "sessions"
+        and endpoint not in config.per_year_endpoints
+        and endpoint not in telemetry_endpoints
+    ]
 
     total_sessions = 0
     yearly_meta = []
@@ -279,7 +409,7 @@ def run_crawler(
         logger.info(f"{'═'*60}")
 
         # Lấy danh sách sessions
-        sessions = _fetch_api(config.base_url, "sessions", {"year": year})
+        sessions = _fetch_api(config, "sessions", {"year": year}, rate_limiter)
         if not sessions:
             logger.warning(f"Không có session nào cho năm {year}. Bỏ qua.")
             continue
@@ -288,7 +418,29 @@ def run_crawler(
         if config.session_types:
             sessions = [s for s in sessions if s.get("session_name") in config.session_types]
 
+        before_future_filter = len(sessions)
+        sessions = _filter_completed_sessions(
+            sessions,
+            config.include_future_sessions,
+            config.completed_before_utc,
+        )
+        if len(sessions) != before_future_filter:
+            logger.info(
+                "  Filtered out %s session(s) after completion cutoff because include_future_sessions=false",
+                before_future_filter - len(sessions),
+            )
+
         # Giới hạn số session mỗi năm (config: limit_sessions)
+        for endpoint in config.per_year_endpoints:
+            if _should_skip_existing_year(config, endpoint, year):
+                logger.info(f"  [SKIP] {endpoint}/{year}.csv already exists")
+                continue
+            data = _fetch_api(config, endpoint, {"year": year}, rate_limiter)
+            if data:
+                _save_year(data, endpoint, year, config, dry_run)
+            else:
+                logger.warning(f"  [NO DATA] {endpoint} [{year}]")
+
         limit = config.limit_sessions
         sessions = sessions[:limit]
 
@@ -303,17 +455,17 @@ def run_crawler(
             logger.info(f"\n  ─── {session_name} | {meeting_name} [key={session_key}] ───")
 
             # ── Lưu metadata session ─────────────────────────────────────────
-            if not _file_exists(config.raw_dir, "sessions", year, session_key):
-                _save([session], "sessions", year, session_key, config.raw_dir, dry_run)
+            if not _should_skip_existing(config, "sessions", year, session_key):
+                _save([session], "sessions", year, session_key, config, dry_run)
             else:
                 logger.info(f"  [SKIP] sessions [{session_key}] — already exists")
 
             # ── Các endpoint thường: chạy SONG SONG ─────────────────────────
-            logger.info(f"  [Parallel] {len(NORMAL_ENDPOINTS)} endpoints × {max_workers} workers")
+            logger.info(f"  [Parallel] {len(normal_endpoints)} endpoints x {max_workers} workers")
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
                 futures = {
-                    pool.submit(_fetch_and_save_one, ep, session, year, config, dry_run): ep
-                    for ep in NORMAL_ENDPOINTS
+                    pool.submit(_fetch_and_save_one, ep, session, year, config, rate_limiter, dry_run): ep
+                    for ep in normal_endpoints
                 }
                 for future in as_completed(futures):
                     ep = futures[future]
@@ -324,20 +476,32 @@ def run_crawler(
 
             # ── Telemetry (car_data + location): chạy TUẦN TỰ ───────────────
             logger.info("  [Sequential] Telemetry endpoints (FastF1)...")
-            for ep in TELEMETRY_ENDPOINTS:
-                if _file_exists(config.raw_dir, ep, year, session_key):
+            for ep in (telemetry_endpoints if config.telemetry_enabled else []):
+                if _should_skip_existing(config, ep, year, session_key):
                     logger.info(f"  [SKIP] {ep} [{session_key}] — already exists")
+                    continue
+
+                if not config.telemetry_crawl_if_missing:
+                    logger.info(f"  [SKIP] {ep} [{session_key}] missing locally; telemetry crawl disabled")
                     continue
 
                 data = _fetch_telemetry_fastf1(
                     year, meeting_name, session_name, ep, cache_dir, session_key
                 )
                 if data:
-                    _save(data, ep, year, session_key, config.raw_dir, dry_run)
+                    _save(data, ep, year, session_key, config, dry_run)
                 else:
                     logger.warning(f"  [NO DATA] {ep} [{session_key}]")
 
             logger.info(f"  ✅ Xong: {meeting_name}")
+            _write_crawler_checkpoint(config, {
+                "updated_at": utc_now_iso(),
+                "year": year,
+                "session_key": session_key,
+                "session_name": session_name,
+                "meeting_name": meeting_name,
+                "status": "session_processed",
+            })
 
         yearly_meta.append({"year": year, "session_count": len(sessions)})
 

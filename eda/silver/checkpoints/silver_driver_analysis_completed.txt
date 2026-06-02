@@ -1,0 +1,15 @@
+{
+  "notebook": "02_driver_analysis",
+  "timestamp": "2026-06-02T00:46:00.689088",
+  "total_drivers": 28,
+  "sessions_analyzed": 70,
+  "grand_prix_sessions": 55,
+  "sprint_sessions": 15,
+  "mean_win_rate_pct_min_5_starts": 3.7388521787348092,
+  "top3_win_concentration_pct": 72.05882352941177,
+  "lap_consistency_finish_corr": -0.4978351339022036,
+  "total_overtakes": 13985,
+  "grid_finish_corr": 0.7415668342234891,
+  "avg_teammate_gap": 3.9711191335740073,
+  "driver_year_rows": 66
+}

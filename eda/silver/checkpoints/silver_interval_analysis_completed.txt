@@ -1,0 +1,11 @@
+{
+  "notebook": "10_interval_analysis",
+  "timestamp": "2026-06-02T02:14:21.974391",
+  "status": "PASS",
+  "interval_rows": 1392480,
+  "valid_interval_rows": 1354519,
+  "sessions": 68,
+  "avg_drs_train_rate": 0.3585296854904298,
+  "highest_drs_train_circuit": "Lusail",
+  "highest_drs_train_rate": 0.47784202203855974
+}

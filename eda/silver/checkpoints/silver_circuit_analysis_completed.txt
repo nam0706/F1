@@ -1,0 +1,11 @@
+{
+  "notebook": "04_circuit_analysis",
+  "timestamp": "2026-06-02T00:46:17.239108",
+  "circuits_analyzed": 24,
+  "sessions_analyzed": 70,
+  "highest_dnf_circuit": "Melbourne",
+  "highest_dnf_rate": 0.2459016393442623,
+  "highest_overtake_circuit": "Sakhir",
+  "highest_avg_overtakes": 527.5,
+  "speed_profile_circuits": 8
+}

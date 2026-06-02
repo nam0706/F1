@@ -1,0 +1,11 @@
+{
+  "notebook": "05_weather_analysis",
+  "timestamp": "2026-06-02T00:46:25.393511",
+  "weather_rows": 9485,
+  "sessions_with_weather": 68,
+  "wet_sessions": 15,
+  "wet_session_rate_pct": 22.058823529411764,
+  "avg_air_temperature": 23.3241409613225,
+  "avg_track_temperature": 34.862358490300274,
+  "track_temp_median_lap_corr": -0.254040194577628
+}

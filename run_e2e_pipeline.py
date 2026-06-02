@@ -1,102 +1,105 @@
+from __future__ import annotations
+
 import logging
-from pathlib import Path
-from src.crawler import run_crawler
+
 from src.clean_data import clean_all
-from src.build_base_dataset import build_base_dataset
-from src.feature_engineering import build_feature_engineering
-from src.utils import setup_logging
 from src.config import load_config
+from src.crawler import run_crawler
+from src.gold.build_gold import build_gold
+from src.model.training import train_gold_finish_bucket_model
+from src.utils import setup_logging
+from src.validate_data import validate_cleaned_data
 
 logger = logging.getLogger("E2E_Pipeline")
 
-# ── Danh sách tất cả các bước theo thứ tự ────────────────────────────────────
-ALL_STEPS = ["crawl", "clean", "base", "feature"]
+ALL_STEPS = ["crawl", "clean", "validate", "feature", "model"]
+
+
+def _resolve_steps(config_steps: list[str], steps: list[str] | None, start_from: str | None) -> list[str]:
+    if steps:
+        unknown = sorted(set(steps) - set(ALL_STEPS))
+        if unknown:
+            raise ValueError(f"Unknown pipeline step(s): {unknown}. Valid steps: {ALL_STEPS}")
+        return [step for step in ALL_STEPS if step in steps]
+
+    if start_from:
+        if start_from not in ALL_STEPS:
+            raise ValueError(f"Unknown start_from={start_from!r}. Valid steps: {ALL_STEPS}")
+        return ALL_STEPS[ALL_STEPS.index(start_from):]
+
+    return [step for step in ALL_STEPS if step in config_steps]
 
 
 def run_e2e_pipeline(
     steps: list[str] | None = None,
     start_from: str | None = None,
-    dry_run: bool = False,
+    dry_run: bool | None = None,
 ) -> None:
-    """
-    Chạy pipeline F1 — toàn bộ hoặc từng phần.
-
-    Cách dùng:
-      run_e2e_pipeline()                              # Chạy tất cả 4 bước
-      run_e2e_pipeline(steps=["clean", "feature"])    # Chỉ chạy 2 bước này
-      run_e2e_pipeline(start_from="base")             # Chạy từ bước 3 trở đi
-      run_e2e_pipeline(steps=["feature"], dry_run=True)  # Thử lại bước 4
-
-    Args:
-        steps      : Danh sách các bước muốn chạy. None = chạy tất cả.
-        start_from : Bắt đầu từ bước này trở đi (bỏ qua các bước trước).
-        dry_run    : Nếu True, không lưu file nào ra đĩa.
-    """
-    setup_logging()
+    """Run the configured F1 medallion pipeline."""
     config = load_config()
+    setup_logging(
+        level=config.log_level,
+        log_file_path=config.log_file_path,
+        log_to_file=config.log_to_file,
+        retention_days=config.log_retention_days,
+    )
+    dry_run = config.dry_run_default if dry_run is None else dry_run
+    to_run = _resolve_steps(config.steps_to_run, steps, start_from)
 
-    # ── Xác định các bước cần chạy từ Config ──────────────────────────────────
-    if steps:
-        to_run = [s for s in ALL_STEPS if s in steps]
-    elif start_from:
-        idx = ALL_STEPS.index(start_from)
-        to_run = ALL_STEPS[idx:]
-    else:
-        # Lấy từ file cấu hình yaml
-        to_run = [s for s in ALL_STEPS if s in config.steps_to_run]
-
-    print("\n" + "=" * 60)
-    print("   F1 DATA PIPELINE")
-    print(f"   Năm: {config.start_year} → {config.end_year}")
-    print(f"   Bước chạy: {' → '.join(to_run)}")
+    print("\n" + "=" * 72)
+    print("F1 DATA PIPELINE")
+    print(f"Mode: {config.execution_mode}")
+    print(f"Years: {config.start_year} -> {config.end_year}")
+    print(f"Steps: {' -> '.join(to_run) if to_run else '(none)'}")
     if dry_run:
-        print("   ⚠️  DRY-RUN MODE")
-    print("=" * 60)
+        print("Mode: dry run")
+    print("=" * 72)
 
-    # ── STEP 1: CRAWL ─────────────────────────────────────────────────────────
     if "crawl" in to_run:
-        print("\n[STEP 1] Crawling data (OpenF1 + FastF1)...")
+        print("\n[1/5] Crawl Bronze raw data")
         crawl_meta = run_crawler(dry_run=dry_run)
-        print(f"  Tổng session đã crawl: {crawl_meta.get('total_sessions', 0)}")
+        print(f"  Crawl status: {crawl_meta.get('status', 'unknown')}")
+        print(f"  Sessions processed: {crawl_meta.get('total_sessions', 0):,}")
     else:
-        print("\n[STEP 1] Crawl — BỎ QUA")
+        print("\n[1/5] Crawl Bronze raw data - skipped")
 
-    # ── STEP 2: CLEAN ─────────────────────────────────────────────────────────
     if "clean" in to_run:
-        print("\n[STEP 2] Cleaning data (Bronze → Silver)...")
+        print("\n[2/5] Clean Bronze -> Silver")
         clean_all(dry_run=dry_run)
     else:
-        print("\n[STEP 2] Clean — BỎ QUA")
+        print("\n[2/5] Clean Bronze -> Silver - skipped")
 
-    # ── STEP 3: BUILD BASE DATASET ────────────────────────────────────────────
-    if "base" in to_run:
-        print("\n[STEP 3] Building session-level base dataset...")
-        base = build_base_dataset(dry_run=dry_run)
-        print(f"  Base dataset: {base.shape[0]:,} rows × {base.shape[1]} cols")
+    if "validate" in to_run:
+        print("\n[3/5] Validate Silver tables")
+        validation_report = validate_cleaned_data()
+        error_count = 0 if validation_report.empty else int((validation_report["severity"] == "error").sum())
+        print(f"  Validation issues: {len(validation_report):,} ({error_count:,} errors)")
     else:
-        print("\n[STEP 3] Base — BỎ QUA")
+        print("\n[3/5] Validate Silver tables - skipped")
 
-    # ── STEP 4: FEATURE ENGINEERING ───────────────────────────────────────────
     if "feature" in to_run:
-        print("\n[STEP 4] Feature engineering (lap-level master)...")
-        master = build_feature_engineering(dry_run=dry_run)
-        print(f"  Master dataset: {master.shape[0]:,} rows × {master.shape[1]} cols")
+        print("\n[4/5] Build Gold datasets")
+        gold_meta = build_gold(dry_run=dry_run)
+        feature_meta = gold_meta.get("features") or {}
+        print(f"  Gold status: {gold_meta.get('status', 'unknown')}")
+        print(f"  Master features: {feature_meta.get('rows', 0):,} rows x {len(feature_meta.get('columns', []))} columns")
     else:
-        print("\n[STEP 4] Feature — BỎ QUA")
+        print("\n[4/5] Build Gold datasets - skipped")
 
-    # ── HOÀN TẤT ──────────────────────────────────────────────────────────────
-    print("\n" + "=" * 60)
-    print("   ✅ PIPELINE HOÀN TẤT!")
-    print("=" * 60)
+    if "model" in to_run:
+        print("\n[5/5] Train Gold contract model")
+        model_meta = train_gold_finish_bucket_model(dry_run=dry_run)
+        print(f"  Model status: {model_meta.get('status', 'unknown')}")
+        metrics = model_meta.get("metrics", {})
+        if metrics:
+            print(f"  Holdout macro F1: {metrics.get('f1_macro', 0.0):.4f}")
+    else:
+        print("\n[5/5] Train Gold contract model - skipped")
+
+    print("\n" + "=" * 72)
+    print("PIPELINE COMPLETE")
+    print("=" * 72)
 
 
 if __name__ == "__main__":
-    # ┌─────────────────────────────────────────────────────────┐
-    # │  ĐIỀU KHIỂN PIPELINE QUA FILE CẤU HÌNH                │
-    # │  Vào file: configs/pipeline_config.yaml                 │
-    # │  Tìm mục: execution -> steps_to_run                     │
-    # │  Thêm/Xóa các bước: crawl, clean, base, feature         │
-    # └─────────────────────────────────────────────────────────┘
-
-    # Không truyền argument, để hệ thống tự động đọc từ YAML
     run_e2e_pipeline()

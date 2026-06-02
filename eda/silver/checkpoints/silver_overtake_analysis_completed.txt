@@ -1,0 +1,11 @@
+{
+  "notebook": "09_overtake_analysis",
+  "timestamp": "2026-06-02T02:14:13.276117",
+  "status": "PASS",
+  "overtake_rows": 13985,
+  "sessions": 68,
+  "top_net_overtake_driver": "Lewis HAMILTON",
+  "top_net_overtakes": 100.0,
+  "highest_overtake_circuit": "Sakhir",
+  "highest_avg_overtakes": 527.5
+}

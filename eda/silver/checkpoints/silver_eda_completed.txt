@@ -1,0 +1,12 @@
+{
+  "notebook": "07_correlation_analysis",
+  "timestamp": "2026-06-02T00:46:47.226842",
+  "status": "PASS",
+  "feature_matrix_rows": 1374,
+  "feature_matrix_columns": 55,
+  "candidate_feature_count": 29,
+  "high_correlation_pair_count": 21,
+  "leakage_review_columns": 7,
+  "top_safe_finish_corr_feature": "grid_pos",
+  "top_safe_finish_corr_value": 0.7415668342234911
+}

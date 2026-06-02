@@ -1,0 +1,14 @@
+{
+  "notebook": "03_team_analysis",
+  "timestamp": "2026-06-02T00:46:08.817900",
+  "teams_analyzed": 13,
+  "sessions_analyzed": 68,
+  "total_points": 5912.0,
+  "top1_points_concentration_pct": 27.148173207036535,
+  "top3_points_concentration_pct": 66.94857916102842,
+  "top_team": "McLaren",
+  "top_team_points": 1605.0,
+  "team_season_rows": 31,
+  "home_signal_teams": 4,
+  "avg_driver_balance_pct": 48.735443096993976
+}

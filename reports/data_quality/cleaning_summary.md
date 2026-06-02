@@ -1,13 +1,17 @@
-| file                |        raw_rows |      clean_rows |   dropped | status   |
-|:--------------------|----------------:|----------------:|----------:|:---------|
-| sessions.csv        |    72           |    72           |         0 | ok       |
-| drivers.csv         |  1486           |  1486           |         0 | ok       |
-| session_results.csv |   nan           |   nan           |       nan | skipped  |
-| laps.csv            | 56970           | 56674           |       296 | ok       |
-| weather.csv         |  8074           |  8068           |         6 | ok       |
-| stints.csv          |  2816           |  2791           |        25 | ok       |
-| starting_grid.csv   |   nan           |   nan           |       nan | skipped  |
-| intervals.csv       |     1.24838e+06 |     1.24718e+06 |      1205 | ok       |
-| position.csv        | 24656           | 24637           |        19 | ok       |
-| car_data.parquet    |     3.50593e+06 |     3.50593e+06 |         0 | ok       |
-| location.parquet    |     3.67802e+06 |     3.67802e+06 |         0 | ok       |
+| file                   |   raw_rows |   clean_rows |   dropped | status                              |
+|:-----------------------|-----------:|-------------:|----------:|:------------------------------------|
+| meetings.parquet       |         76 |           76 |         0 | ok                                  |
+| sessions.parquet       |         70 |           70 |         0 | ok                                  |
+| drivers.parquet        |       1418 |         1418 |         0 | ok                                  |
+| session_result.parquet |       1374 |         1374 |         0 | ok                                  |
+| laps.parquet           |      64039 |        63676 |       363 | ok                                  |
+| weather.parquet        |       9491 |         9485 |         6 | ok                                  |
+| stints.parquet         |       3281 |         3254 |        27 | ok                                  |
+| starting_grid.parquet  |       1355 |         1375 |       -20 | ok_remapped_from_qualifying_meeting |
+| intervals.parquet      |    1393827 |      1392480 |      1347 | ok                                  |
+| position.parquet       |      27789 |        27767 |        22 | ok                                  |
+| overtakes.parquet      |      13995 |        13985 |        10 | ok                                  |
+| pit.parquet            |       1891 |         1891 |         0 | ok                                  |
+| race_control.parquet   |       5975 |         5830 |       145 | ok                                  |
+| car_data.parquet       |   43076581 |     43076581 |         0 | ok                                  |
+| location.parquet       |   21824928 |     21824928 |         0 | ok                                  |

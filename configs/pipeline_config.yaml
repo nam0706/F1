@@ -2,41 +2,63 @@ project:
   name: F1_WinRate_Predictor
 
 execution:
-  # Cấu hình các bước Pipeline sẽ chạy. Xóa dòng để bỏ qua bước đó.
-  # Các tùy chọn: crawl, clean, base, feature
+  mode: full
+  dry_run: false
+  sample_mode: false
+  sample_session_limit: null
+  # Official academic pipeline order.
   steps_to_run:
     - crawl
     - clean
-    - base
+    - validate
     - feature
+    - model
 
 data:
   start_year: 2024
   end_year: 2026
   raw_dir: data/raw
-  interim_dir: data/interim
   cleaned_dir: data/cleaned
-  processed_dir: data/processed
-  preview_dir: data/preview
+  gold_dir: data/gold
   metadata_dir: data/metadata
   reports_dir: reports/data_quality
+
+logging:
+  level: INFO
+  log_to_file: true
+  log_file_path: reports/logs/pipeline.log
+  retention_days: 14
 
 api:
   base_url: https://api.openf1.org/v1
   sleep_seconds: 1
+  rate_limit_max_calls: 28
+  rate_limit_period_seconds: 60.0
   retry_wait_seconds: 6.0
   max_retries: 5
   timeout_seconds: 30
 
+crawler:
+  max_workers: 4
+  fastf1_cache_dir: .cache/fastf1
+  resume_existing_files: true
+  checkpoint:
+    enabled: true
+    path: data/metadata/crawler_checkpoint.json
+    frequency: per_session
+  raw_reset_policy:
+    delete_raw_before_crawl: false
+    preserve_endpoints:
+      - team_radio
+
 sessions:
   include_future_sessions: false
-  limit_sessions: 99  # Số lượng session tối đa mỗi năm (1 để test, ví dụ 99 để lấy hết)
+  completed_before_utc: "2026-05-31T23:59:59Z"
+  freeze_existing_raw: false
+  limit_sessions: 99
   types:
     - Race
     - Sprint
-    - Qualifying
-    - Sprint Shootout
-    - Sprint Qualifying
 
 raw_endpoints:
   per_year:
@@ -48,9 +70,134 @@ raw_endpoints:
     - intervals
     - stints
     - position
+    - starting_grid
+    - session_result
+    - pit
+    - overtakes
     - race_control
+
+preserve_raw_endpoints:
+  - team_radio
+
+storage:
+  csv_format: csv
+  csv_encoding: utf-8
+  csv_index: false
+  telemetry_format: parquet
+  telemetry_compression: zstd
+  silver_large_format: parquet
+  silver_large_compression: zstd
+  gold_format: parquet
+  gold_compression: zstd
+
+quality:
+  fail_on_schema_drift: false
+  fail_on_partition_violation: true
+  validation_chunk_size: 200000
+  telemetry_validation_mode: row_group
+  max_duplicate_rate_pct: 0.0
+  max_null_pct_for_required_columns: 0.0
+  max_missing_lap_count: 0
+  min_parse_success_pct: 99.0
+  allow_structural_missingness: true
+
+partition_contract:
+  per_year_pattern: data/raw/{endpoint}/{year}/{endpoint}.csv
+  per_session_csv_pattern: data/raw/{endpoint}/{year}/{session_key}.csv
+  per_session_parquet_pattern: data/raw/{endpoint}/{year}/{session_key}.parquet
+  required_years:
+    - 2024
+    - 2025
+    - 2026
+
+schema_contract:
+  meetings:
+    required_columns:
+      - meeting_key
+      - meeting_name
+      - year
+  sessions:
+    required_columns:
+      - session_key
+      - meeting_key
+      - session_name
+      - date_start
+  drivers:
+    required_columns:
+      - session_key
+      - driver_number
+      - full_name
+  laps:
+    required_columns:
+      - session_key
+      - driver_number
+      - lap_number
+      - lap_duration
+  weather:
+    required_columns:
+      - session_key
+      - date
+      - track_temperature
+      - air_temperature
+  session_result:
+    required_columns:
+      - session_key
+      - driver_number
+      - position
+  pit:
+    required_columns:
+      - session_key
+      - driver_number
+      - lap_number
+      - date
+  race_control:
+    required_columns:
+      - session_key
+      - date
+      - category
+      - message
+  car_data:
+    required_columns:
+      - session_key
+      - driver_number
+      - lap_number
+  location:
+    required_columns:
+      - session_key
+      - driver_number
+      - lap_number
 
 telemetry:
   enabled: true
-  keep_raw: false
-  resample_interval: null   
+  endpoints:
+    - car_data
+    - location
+  crawl_if_missing: true
+  aggregate: false
+  aggregate_cache_path: data/metadata/telemetry_lap_features.parquet
+  join_to_master: false
+  keep_raw: true
+  resample_interval: null
+
+model:
+  status: gold_contract_training
+  target_column: target_finish_bucket
+  training_dataset_path: data/gold/training/finish_bucket_live_any_lap.parquet
+  feature_contract_path: data/gold/metadata/feature_contract.json
+  leakage_report_path: data/gold/metadata/leakage_report.json
+  model_dir: models
+  reports_dir: reports/model
+  predictions_dir: data/gold/model
+  artifact_path: models/gold_finish_bucket_model.joblib
+  metadata_path: models/gold_model_metadata.json
+  holdout_predictions_path: data/gold/model/holdout_predictions.parquet
+  model_report_path: reports/model/gold_model_report.md
+  confusion_matrix_path: reports/model/gold_confusion_matrix.csv
+  feature_importance_path: reports/model/gold_feature_importance.csv
+  test_size: 0.2
+  random_state: 42
+  n_estimators: 300
+  max_depth: 16
+  min_samples_leaf: 20
+  class_weight: balanced
+  n_jobs: -1

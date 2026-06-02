@@ -1,0 +1,13 @@
+{
+  "notebook": "01_verify_cleaned_data",
+  "timestamp": "2026-06-02T00:45:52.011623",
+  "status": "PASS",
+  "total_files": 13,
+  "total_rows": 66416469,
+  "grand_prix_sessions": 55,
+  "sprint_sessions": 15,
+  "critical_null_review_count": 1,
+  "grid_finish_correlation": 0.7415668342234872,
+  "missing_files": [],
+  "missing_columns": []
+}

@@ -1,0 +1,12 @@
+{
+  "notebook": "08_pit_stop_analysis",
+  "timestamp": "2026-06-02T02:13:45.759778",
+  "status": "PASS",
+  "pit_source": "silver",
+  "pit_rows": 1891,
+  "sessions_with_pit": 64,
+  "median_pit_duration": 23.282,
+  "fastest_team": "RB",
+  "fastest_team_median_duration": 22.7,
+  "coverage_issue": null
+}

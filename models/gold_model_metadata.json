@@ -1,0 +1,127 @@
+{
+  "status": "trained",
+  "generated_at": "2026-06-02T07:58:09.207883+00:00",
+  "training_dataset_path": "data\\gold\\training\\finish_bucket_live_any_lap.parquet",
+  "feature_contract_path": "data\\gold\\metadata\\feature_contract.json",
+  "leakage_status": "PASS",
+  "artifact_path": "models\\gold_finish_bucket_model.joblib",
+  "metadata_path": "models\\gold_model_metadata.json",
+  "holdout_predictions_path": "data\\gold\\model\\holdout_predictions.parquet",
+  "rows": 62422,
+  "train_rows": 51043,
+  "test_rows": 11379,
+  "train_sessions": 54,
+  "test_sessions": 14,
+  "feature_count": 49,
+  "feature_columns": [
+    "event_type",
+    "year",
+    "circuit_short_name",
+    "country_name",
+    "team_name",
+    "country_code",
+    "grid_position",
+    "scheduled_laps",
+    "race_progress_pct",
+    "laps_to_go",
+    "is_pit_out_lap",
+    "is_outlier_lap",
+    "current_position",
+    "prev_position",
+    "position_delta_prev_lap",
+    "position_change_direction",
+    "is_leading",
+    "is_top3_live",
+    "is_top10_live",
+    "pit_count_so_far",
+    "laps_since_last_pit",
+    "last_lane_duration",
+    "last_stop_duration",
+    "last_pit_duration",
+    "stint_number",
+    "compound",
+    "tyre_age_at_start",
+    "stint_lap_index",
+    "current_tyre_age",
+    "laps_remaining_in_stint",
+    "is_first_stint",
+    "interval_value_seconds",
+    "gap_to_leader_seconds",
+    "prev_interval_value_seconds",
+    "prev_gap_to_leader_seconds",
+    "interval_status",
+    "gap_status",
+    "track_temperature",
+    "air_temperature",
+    "humidity",
+    "pressure",
+    "rainfall",
+    "is_wet_track",
+    "track_temp_delta_prev_lap",
+    "prev_lap_overtakes_made",
+    "prev_lap_overtakes_lost",
+    "overtakes_made_so_far",
+    "overtakes_lost_so_far",
+    "net_overtakes_so_far"
+  ],
+  "target_column": "target_finish_bucket",
+  "class_labels": {
+    "0": "WIN",
+    "1": "PODIUM_NON_WIN",
+    "2": "POINTS_NON_PODIUM",
+    "3": "CLASSIFIED_OUTSIDE_POINTS",
+    "4": "DNF_DNS_DSQ_UNCLASSIFIED"
+  },
+  "metrics": {
+    "accuracy": 0.7409262676860884,
+    "balanced_accuracy": 0.6190924494593073,
+    "f1_macro": 0.6092292168250664,
+    "f1_weighted": 0.722397948298461,
+    "log_loss": 0.7435928239375044
+  },
+  "classification_report": {
+    "WIN": {
+      "precision": 0.7288676236044657,
+      "recall": 0.744299674267101,
+      "f1-score": 0.7365028203062046,
+      "support": 614.0
+    },
+    "PODIUM_NON_WIN": {
+      "precision": 0.6087272727272727,
+      "recall": 0.6804878048780488,
+      "f1-score": 0.6426103646833013,
+      "support": 1230.0
+    },
+    "POINTS_NON_PODIUM": {
+      "precision": 0.7437365783822477,
+      "recall": 0.7598732325694783,
+      "f1-score": 0.7517183166525986,
+      "support": 4102.0
+    },
+    "CLASSIFIED_OUTSIDE_POINTS": {
+      "precision": 0.7899860917941586,
+      "recall": 0.8543188654920498,
+      "f1-score": 0.820893981624858,
+      "support": 4654.0
+    },
+    "DNF_DNS_DSQ_UNCLASSIFIED": {
+      "precision": 0.2875816993464052,
+      "recall": 0.05648267008985879,
+      "f1-score": 0.0944206008583691,
+      "support": 779.0
+    },
+    "accuracy": 0.7409262676860884,
+    "macro avg": {
+      "precision": 0.63177985317091,
+      "recall": 0.6190924494593073,
+      "f1-score": 0.6092292168250664,
+      "support": 11379.0
+    },
+    "weighted avg": {
+      "precision": 0.7160284845656499,
+      "recall": 0.7409262676860884,
+      "f1-score": 0.722397948298461,
+      "support": 11379.0
+    }
+  }
+}

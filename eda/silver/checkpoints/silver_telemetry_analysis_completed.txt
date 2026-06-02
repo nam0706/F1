@@ -1,0 +1,10 @@
+{
+  "notebook": "06_telemetry_analysis",
+  "timestamp": "2026-06-02T00:46:38.333083",
+  "car_sample_rows": 400000,
+  "location_sample_rows": 180000,
+  "sampled_driver_sessions": 200,
+  "lap_telemetry_rows": 10280,
+  "top_telemetry_corr_feature": "avg_rpm",
+  "top_telemetry_corr_value": -0.16383419066525645
+}
