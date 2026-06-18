@@ -159,12 +159,13 @@ def build_base_dataset(config_path: str | None = None, dry_run: bool = False) ->
         except Exception as exc:
             logger.warning("Could not write parquet output: %s", exc)
 
-    markdown = "# Driver Session Base Dataset\n\n"
-    markdown += f"Rows: {len(base):,}\n\n"
-    markdown += f"Columns: {len(base.columns):,}\n\n"
-    markdown += "Primary key: `session_key + driver_number`\n\n"
-    markdown += "This dataset is the main handoff artifact for the ML team.\n"
-    write_markdown(markdown, config.reports_dir / "base_dataset_report.md")
+    if not dry_run:
+        markdown = "# Driver Session Base Dataset\n\n"
+        markdown += f"Rows: {len(base):,}\n\n"
+        markdown += f"Columns: {len(base.columns):,}\n\n"
+        markdown += "Primary key: `session_key + driver_number`\n\n"
+        markdown += "This dataset is the main handoff artifact for the ML team.\n"
+        write_markdown(markdown, config.reports_dir / "base_dataset_report.md")
 
     logger.info("Built driver_session_base with %s rows and %s columns", len(base), len(base.columns))
     return base

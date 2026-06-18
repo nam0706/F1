@@ -1,0 +1,932 @@
+\documentclass[conference]{IEEEtran}
+
+% Báo cáo dùng tiếng Việt Unicode. Nên compile bằng XeLaTeX.
+\usepackage{fontspec}
+\usepackage{polyglossia}
+\setmainlanguage{vietnamese}
+\setmainfont{Times New Roman}
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{float}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  frame=single,
+  columns=fullflexible
+}
+
+\title{Tiền xử lý và xây dựng bộ dữ liệu Formula 1 cấp độ vòng đua có kiểm soát rò rỉ dữ liệu cho bài toán dự đoán trực tiếp trước vòng N}
+
+\author{
+\IEEEauthorblockN{Nguyễn Ngọc Nam}
+\IEEEauthorblockA{Khoa Khoa học Dữ liệu\\
+Trường Đại học Công nghệ Thông tin, ĐHQG-HCM\\
+24521114@gm.uit.edu.vn}
+\and
+\IEEEauthorblockN{Nguyễn Thị Kim Ngân}
+\IEEEauthorblockA{Khoa Khoa học Dữ liệu\\
+Trường Đại học Công nghệ Thông tin, ĐHQG-HCM\\
+24521130@gm.uit.edu.vn}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+
+Bộ dữ liệu Formula 1 được xây dựng từ nhiều nguồn dữ liệu không đồng nhất, bao gồm kết quả các phiên đua, dữ liệu telemetry tần suất cao, chuỗi sự kiện pit-stop, race-control, dữ liệu thời tiết theo thời gian và nhãn kết quả sau phiên đua. Nghiên cứu này xây dựng một bộ dữ liệu tái lập cho bài toán dự đoán \emph{Live before lap N}, trong đó các đặc trưng đầu vào của mỗi tay đua tại vòng \(N\) chỉ sử dụng thông tin sẵn có trước khi vòng đua bắt đầu. Pipeline được tổ chức theo kiến trúc Bronze--Silver--Gold. Dữ liệu từ OpenF1 và FastF1 được chuẩn hóa, tích hợp và tổng hợp thành bộ dữ liệu cấp vòng đua với khóa hạt \texttt{session\_key + driver\_number + lap\_number}. Bộ dữ liệu cuối cùng gồm 82.535 bản ghi, 112 thuộc tính và 69 đặc trưng số phục vụ mô hình học máy, không chứa bản ghi trùng khóa hạt và bao gồm các nhãn \texttt{target\_win}, \texttt{target\_podium} và \texttt{target\_top10}. Kết quả của nghiên cứu là một bộ dữ liệu nhất quán về mặt thời gian, có khả năng kiểm toán, kèm metadata và được thiết kế nhằm giảm thiểu rò rỉ dữ liệu trong quá trình tiền xử lý và xây dựng đặc trưng.
+
+\end{abstract}
+
+\renewcommand\IEEEkeywordsname{Keywords}
+\begin{IEEEkeywords}
+Formula 1, data engineering, telemetry, feature engineering, Medallion architecture, data leakage
+\end{IEEEkeywords}
+
+
+\section{Giới thiệu}
+Formula 1 (F1) tạo ra lượng lớn dữ liệu từ nhiều nguồn khác nhau trong mỗi phiên đua. Kết quả một phiên đua không chỉ phụ thuộc vào tốc độ của tay đua, mà còn bị chi phối bởi chiến thuật lốp, pit-stop, thời tiết, sự kiện race-control, cờ vàng, xe an toàn, khả năng vượt xe, tình trạng xe và hiệu suất telemetry. Các nhóm dữ liệu này không được lưu ở cùng một độ hạt. Có dữ liệu ở cấp phiên, có dữ liệu ở cấp tay đua-phiên, có dữ liệu ở cấp vòng, có dữ liệu là sự kiện rời rạc, và cũng có dữ liệu là chuỗi thời gian tần suất cao.
+
+Nếu ghép các nguồn dữ liệu này một cách trực tiếp, quá trình tích hợp dữ liệu dễ phát sinh lỗi. Ví dụ, join telemetry trực tiếp vào bảng laps có thể làm tăng số lượng bản ghi ngoài mong muốn vì một vòng đua có hàng trăm hoặc hàng nghìn điểm telemetry. Ghép dữ liệu thời tiết theo timestamp tuyệt đối có thể mất nhiều dòng vì weather không được lấy mẫu cùng thời điểm với lap. Join kết quả phiên đua quá sớm có thể làm rò rỉ \texttt{final\_position} vào ma trận đặc trưng. Vì vậy, trọng tâm của đồ án không nằm ở việc lựa chọn mô hình học máy, mà ở việc thiết kế một quy trình tiền xử lý và xây dựng bộ dữ liệu có độ hạt nhất quán, hạn chế rò rỉ dữ liệu và phù hợp với bài toán dự đoán theo thời gian.
+
+Trong phạm vi môn học, đồ án tập trung vào các bước thu thập dữ liệu, tiền xử lý, xây dựng bộ dữ liệu, phân tích khám phá dữ liệu và xây dựng ứng dụng minh họa. Việc huấn luyện và đánh giá mô hình học máy không nằm trong phạm vi thực hiện. Tuy nhiên, bộ dữ liệu được thiết kế nhằm phục vụ các bài toán dự đoán trực tiếp trong các nghiên cứu tiếp theo.
+
+Bối cảnh dự đoán được chọn là:
+
+\begin{quote}
+\emph{Live before lap N: dự đoán trước khi vòng \(N\) bắt đầu, chỉ sử dụng thông tin có sẵn đến hết vòng \(N-1\).}
+\end{quote}
+
+Đây là nguyên tắc thiết kế xuyên suốt của toàn bộ pipeline tiền xử lý. Nguyên tắc này quyết định đặc trưng nào được sử dụng làm đầu vào, đặc trưng nào chỉ được sử dụng làm nhãn và thông tin nào chỉ phục vụ cho phân tích hoặc kiểm toán dữ liệu.
+
+\textbf{Đóng góp chính.}
+
+Đồ án có các đóng góp chính như sau:
+
+\begin{itemize}
+    \item Đề xuất quy trình tiền xử lý và xây dựng bộ dữ liệu Formula 1 dựa trên kiến trúc Medallion (Bronze--Silver--Gold), giúp chuẩn hóa dữ liệu, tách biệt các giai đoạn xử lý và nâng cao khả năng bảo trì của pipeline.
+
+    \item Thiết kế pipeline theo hướng \emph{config-driven}, cho phép tái thực thi toàn bộ quy trình từ dữ liệu thô một cách nhất quán và có khả năng tái lập.
+
+    \item Định nghĩa bối cảnh dự đoán \texttt{live\_before\_lap\_n} và sử dụng bối cảnh này làm nguyên tắc để xây dựng cũng như kiểm soát các đặc trưng đầu vào, nhằm hạn chế rò rỉ dữ liệu.
+
+    \item Xây dựng bộ dữ liệu đầu ra đi kèm metadata và báo cáo kiểm toán (audit report) để kiểm tra độ hạt dữ liệu, phát hiện rò rỉ dữ liệu và xác định tập đặc trưng an toàn cho các bài toán học máy.
+
+    \item Cung cấp datasheet và codebook mô tả cấu trúc, ý nghĩa và giới hạn của từng nhóm đặc trưng, hỗ trợ việc tái sử dụng và mở rộng bộ dữ liệu.
+\end{itemize}
+
+
+\section{Phát biểu bài toán}
+\subsection{Thời điểm dự đoán}
+Một lỗi phổ biến trong các bộ dữ liệu thể thao là không định nghĩa rõ thời điểm dự đoán. Một thuộc tính có thể hợp lệ trong một bối cảnh dự đoán nhưng trở thành rò rỉ dữ liệu trong bối cảnh khác. Ví dụ, pit-stop xảy ra ở vòng \(N\) là hợp lệ nếu dự đoán sau khi vòng \(N\) kết thúc, nhưng là leakage nếu dự đoán trước khi vòng \(N\) bắt đầu.
+
+Đồ án sử dụng công thức:
+
+\begin{equation}
+X_{d,s,N} = f(\mathcal{H}_{d,s,N-1})
+\end{equation}
+
+Công thức này thể hiện rằng mọi đặc trưng đầu vào đều chỉ được xây dựng từ thông tin đã quan sát trước thời điểm dự đoán. Trong đó \(X_{d,s,N}\) là vector đặc trưng của tay đua \(d\), phiên \(s\), vòng \(N\), còn \(\mathcal{H}_{d,s,N-1}\) là toàn bộ lịch sử có thể quan sát đến hết vòng \(N-1\). Các nhãn như chiến thắng, podium hoặc top 10 là outcome của toàn phiên và được lặp lại trên các dòng lap-level của cùng tay đua-phiên để phục vụ học có giám sát sau này.
+
+\subsection{Nhãn dự đoán}
+Bộ dữ liệu cuối cùng bao gồm ba nhãn nhị phân phục vụ các bài toán phân loại và một biến outcome dùng cho mục đích kiểm toán dữ liệu.
+
+\begin{itemize}
+    \item \texttt{target\_win}: bằng 1 nếu tay đua về nhất.
+    \item \texttt{target\_podium}: bằng 1 nếu tay đua về trong top 3.
+    \item \texttt{target\_top10}: bằng 1 nếu tay đua về trong top 10.
+    \item \texttt{final\_position}: thứ hạng cuối cùng, dùng làm outcome/audit.
+\end{itemize}
+
+Các cột outcome được đặt ở cuối bộ dữ liệu nhằm tách biệt nhãn dự đoán với các đặc trưng đầu vào, giúp quá trình kiểm tra và sử dụng dữ liệu thuận tiện hơn.
+
+\subsection{Vì sao chọn cấp vòng đua}
+
+Bộ dữ liệu ở cấp phiên phù hợp với các bài toán dự đoán trước khi cuộc đua bắt đầu, nhưng không phản ánh được diễn biến của cuộc đua theo thời gian. Ngược lại, bộ dữ liệu ở cấp vòng đua cho phép mô tả sự thay đổi trạng thái của từng tay đua sau mỗi vòng, chẳng hạn như sự thay đổi về tốc độ, tình trạng lốp, số lần pit-stop, các sự kiện race-control hoặc số lần vượt xe. Nhờ đó, xác suất dự đoán có thể được cập nhật liên tục khi cuộc đua diễn ra.
+
+Đổi lại, các nhãn kết quả cuối phiên sẽ được lặp lại trên nhiều bản ghi tương ứng với các vòng đua của cùng một tay đua. Do đó, khi sử dụng bộ dữ liệu này để huấn luyện mô hình trong tương lai, cần chia tập dữ liệu theo phiên đua, sự kiện hoặc thứ tự thời gian thay vì chia ngẫu nhiên theo từng bản ghi nhằm tránh rò rỉ dữ liệu giữa tập huấn luyện và tập kiểm thử.
+
+\section{Cơ sở liên quan và nguyên tắc thiết kế}
+\subsection{Sports analytics và dữ liệu F1}
+Trong lĩnh vực sports analytics, dữ liệu từ các trận đấu hoặc cuộc thi thường được tiền xử lý và chuyển đổi thành các đặc trưng phục vụ phân tích hoặc học máy. So với nhiều môn thể thao khác, dữ liệu Formula 1 có mức độ phức tạp cao hơn do được thu thập từ nhiều nguồn với độ hạt và tần suất khác nhau. Bên cạnh dữ liệu kết quả và sự kiện như pit-stop hoặc race-control, Formula 1 còn có dữ liệu telemetry và vị trí xe được ghi nhận liên tục theo thời gian. Sự kết hợp giữa các nguồn dữ liệu này cùng với ảnh hưởng của thời tiết, chiến thuật lốp và xe an toàn làm cho việc xây dựng một bộ dữ liệu nhất quán trở thành một thách thức trong quá trình tiền xử lý.
+
+\subsection{Kiến trúc Medallion}
+Đồ án áp dụng kiến trúc Medallion gồm ba tầng Bronze, Silver và Gold để tổ chức pipeline tiền xử lý dữ liệu. Tầng Bronze lưu trữ dữ liệu gốc từ các nguồn thu thập, tầng Silver thực hiện làm sạch, chuẩn hóa và tích hợp dữ liệu, trong khi tầng Gold xây dựng bộ dữ liệu cuối cùng phục vụ phân tích và học máy. Cách tổ chức này giúp tách biệt rõ các giai đoạn xử lý, tăng khả năng truy vết nguồn gốc dữ liệu, hỗ trợ tái thực thi toàn bộ pipeline và hạn chế các thao tác chỉnh sửa thủ công làm ảnh hưởng đến tính nhất quán của bộ dữ liệu.
+
+\subsection{Datasheets for Datasets}
+Bên cạnh bộ dữ liệu, đồ án còn xây dựng tài liệu mô tả theo tinh thần của \emph{Datasheets for Datasets}. Tài liệu này cung cấp thông tin về nguồn dữ liệu, cấu trúc bộ dữ liệu, ý nghĩa của các thuộc tính, phạm vi sử dụng và những hạn chế hiện có. Việc tài liệu hóa giúp người sử dụng hiểu đúng bộ dữ liệu, giảm nguy cơ sử dụng sai các thuộc tính hoặc diễn giải sai kết quả trong quá trình phân tích và xây dựng mô hình.
+
+\section{Nguồn dữ liệu và artifact}
+\subsection{Nguồn dữ liệu}
+Pipeline sử dụng hai nguồn chính:
+
+\begin{itemize}
+    \item \textbf{OpenF1 API}: dữ liệu dạng bảng về sessions, drivers, laps, weather, intervals, stints, starting grid, race control, pit stops, overtakes và session results.
+    \item \textbf{FastF1}: telemetry và location tần suất cao, dùng để tạo đặc trưng previous-lap và phục vụ tab race replay trong app.
+\end{itemize}
+
+Metadata crawl ghi nhận 180 sessions trong giai đoạn 2024--2026, mỗi năm 60 sessions. Trong cấu hình nộp bài, bước crawl được tắt vì tốn thời gian và phụ thuộc mạng/API. Pipeline mặc định rebuild các artifact dẫn xuất từ dữ liệu đã có trong \texttt{data/raw}.
+
+\subsection{Danh sách endpoint}
+Bảng~\ref{tab:endpoints} tóm tắt các endpoint chính. Điểm quan trọng là không tồn tại một khóa tự nhiên duy nhất cho mọi nguồn.
+
+\begin{table*}[htbp]
+\caption{Endpoint và vai trò tích hợp}
+\label{tab:endpoints}
+\centering
+\begin{tabular}{p{0.16\linewidth}p{0.18\linewidth}p{0.18\linewidth}p{0.38\linewidth}}
+\toprule
+Endpoint & Độ hạt gần đúng & Vai trò & Cách dùng trong pipeline \\
+\midrule
+\texttt{meetings} & meeting/session & Metadata sự kiện & Bổ sung mùa, quốc gia, circuit và meeting key. \\
+\texttt{sessions} & session & Metadata phiên & Xác định session type, thời gian bắt đầu/kết thúc. \\
+\texttt{drivers} & driver-session & Metadata thực thể & Bổ sung tên tay đua, acronym và đội đua. \\
+\texttt{session\_results} & driver-session & Outcome & Tạo \texttt{final\_position} và labels; không dùng làm input. \\
+\texttt{starting\_grid} & driver-session & Context trước phiên & Dùng cho dataset base và phân tích pre-race sau này. \\
+\texttt{laps} & driver-lap & Backbone & Xác định grain của master dataset. \\
+\texttt{stints} & driver-stint & Chiến thuật lốp & Tạo compound, tyre age và cliff features. \\
+\texttt{weather} & session-time & Môi trường & Join backward theo thời gian với tolerance. \\
+\texttt{pit} & driver-event/lap & Sự kiện pit & Tạo current-lap diagnostics và before-lap counters. \\
+\texttt{race\_control} & session-event/lap & Trạng thái cuộc đua & Tạo flag/event counters trước vòng. \\
+\texttt{overtakes} & driver-event & Cạnh tranh & Tạo cumulative made/lost/net overtake. \\
+\texttt{intervals} & driver-time & Khoảng cách thời gian & Cleaned cho khả năng mở rộng sau này. \\
+\texttt{position} & driver-time & Track position stream & Cleaned nhưng không dùng làm feature chính vì dễ mơ hồ leakage. \\
+\texttt{team\_radio} & driver-event & Event dạng text/audio metadata & Cleaned nhưng không feature hóa vì annotation text nằm ngoài phạm vi. \\
+\texttt{car\_data} & driver-time & Telemetry FastF1 & Tổng hợp thành previous-lap telemetry. \\
+\texttt{location} & driver-time & Tọa độ FastF1 & Tổng hợp previous-lap spatial features và dùng cho replay. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Vấn đề lệch độ hạt}
+Kết quả EDA raw cho thấy vấn đề lớn nhất không phải chỉ là missing value, mà là sự lệch độ hạt. Nếu join \texttt{weather} vào \texttt{laps} bằng exact timestamp, nhiều dòng sẽ mất vì weather không được lấy mẫu theo từng lap. Nếu join \texttt{car\_data} trực tiếp vào \texttt{laps}, một vòng sẽ phình thành rất nhiều dòng telemetry. Nếu join \texttt{session\_results} không kiểm soát, \texttt{final\_position} có thể rò rỉ vào feature matrix. Vì vậy, pipeline phải khai báo grain cuối trước khi merge.
+
+\subsection{Các lớp dữ liệu}
+Đồ án tổ chức artifact theo ba lớp:
+
+
+\begin{table}[H]
+\caption{Các lớp dữ liệu và artifact chính}
+\centering
+\begin{tabular}{p{0.16\linewidth}p{0.27\linewidth}p{0.42\linewidth}}
+\toprule
+Lớp & Mục đích & Artifact chính \\
+\midrule
+Bronze & Lưu raw nguyên bản & \texttt{data/raw/} \\
+Silver & Clean và chuẩn hóa endpoint & \texttt{data/cleaned/*.csv}, \texttt{car\_data.parquet}, \texttt{location.parquet} \\
+Gold & Tạo dataset phân tích & \texttt{driver\_session\_base.*}, \texttt{master\_dataset.*} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Dataset cuối được lưu ở hai định dạng:
+
+\begin{lstlisting}
+data/processed/master_dataset.parquet
+data/processed/master_dataset.csv
+\end{lstlisting}
+
+Parquet là định dạng ưu tiên để phân tích vì đọc nhanh và gọn hơn. CSV được giữ lại để dễ mở, kiểm tra và nộp kèm.
+
+\subsection{Inventory output}
+Bảng~\ref{tab:outputs} liệt kê các output chính sau khi chạy pipeline mặc định.
+
+\begin{table*}[htbp]
+\caption{Inventory output của pipeline}
+\label{tab:outputs}
+\centering
+\begin{tabular}{p{0.28\linewidth}p{0.18\linewidth}p{0.44\linewidth}}
+\toprule
+Artifact & Stage tạo ra & Mục đích \\
+\midrule
+\texttt{data/cleaned/*.csv} & Clean & Các bảng OpenF1 đã clean. \\
+\texttt{data/cleaned/car\_data.parquet} & Clean & Telemetry FastF1 đã clean, lưu Parquet vì kích thước lớn. \\
+\texttt{data/cleaned/location.parquet} & Clean & Tọa độ FastF1 đã clean, dùng cho feature và replay. \\
+\texttt{reports/data\_quality/cleaning\_summary.*} & Clean & Thống kê số dòng trước/sau clean. \\
+\texttt{data/processed/driver\_session\_base.*} & Base & Dataset trung gian cấp driver-session. \\
+\texttt{reports/data\_quality/base\_dataset\_report.md} & Base & Báo cáo nhỏ cho artifact base. \\
+\texttt{data/processed/master\_dataset.*} & Feature & Dataset cuối cấp driver-lap. \\
+\texttt{data/metadata/feature\_engineering\_metadata.json} & Feature & Metadata contract, shape, whitelist feature và tyre cliffs. \\
+\texttt{reports/data\_quality/master\_dataset\_audit.*} & Feature & Audit cuối cho master dataset. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Kiến trúc pipeline}
+
+Pipeline được cấu hình và điều khiển thông qua \texttt{configs/pipeline\_config.yaml}. Cấu hình nộp bài mặc định như sau:
+
+\begin{lstlisting}
+execution:
+  steps_to_run:
+    - clean
+    - base
+    - feature
+\end{lstlisting}
+
+Pipeline gồm ba giai đoạn chính:
+
+\begin{enumerate}[nosep]
+    \item \textbf{Clean}: chuẩn hóa các endpoint raw thành Silver artifacts.
+    \item \textbf{Base}: xây dựng dataset trung gian ở mức \texttt{session\_key + driver\_number}.
+    \item \textbf{Feature}: tạo master dataset ở mức \texttt{session\_key + driver\_number + lap\_number}.
+\end{enumerate}
+
+Cấu hình này cho phép tái thực thi toàn bộ pipeline mà không cần thực hiện lại quá trình crawl dữ liệu từ API, giúp đảm bảo tính tái lập của bộ dữ liệu.
+
+
+\subsection{Pseudocode}
+
+\begin{lstlisting}
+load configs/pipeline_config.yaml
+for step in steps_to_run:
+    if step == "crawl":
+        fetch OpenF1 and FastF1 raw artifacts
+    if step == "clean":
+        clean every endpoint into data/cleaned
+        write cleaning_summary
+    if step == "base":
+        build driver_session_base
+        write base_dataset_report
+    if step == "feature":
+        build master_dataset
+        write metadata and audit report
+\end{lstlisting}
+
+Project đã bỏ file validate riêng. Thay vào đó, chất lượng dữ liệu được kiểm soát bằng cleaning summary, master dataset audit và EDA notebook. Cách này tránh duy trì một validation path khác grain với dataset cuối.
+
+\section{Phương pháp tiền xử lý}
+\subsection{Chuẩn hóa schema và kiểu dữ liệu}
+Dữ liệu raw có nhiều schema và kiểu dữ liệu không đồng nhất. Stage clean chuyển key, timestamp, lap number, duration và các phép đo vật lý về kiểu nhất quán. Các cột text được strip và chuẩn hóa khi cần. Pipeline dùng cleaner riêng cho từng endpoint vì missing lap duration không có cùng ý nghĩa với missing weather hoặc missing team radio.
+
+\subsection{Data profiling trước khi clean}
+Trước khi quyết định cách xử lý, notebook EDA raw được dùng để kiểm tra tình trạng của từng endpoint. Mục tiêu của bước này không chỉ là thống kê số dòng, mà là xác định loại rủi ro dữ liệu. Với dữ liệu F1, một tỷ lệ missing nhỏ chưa chắc nguy hiểm bằng một lỗi grain hoặc một lỗi join thời gian. Vì vậy, profiling được tổ chức theo năm nhóm câu hỏi:
+
+\begin{enumerate}
+    \item Endpoint này đang nằm ở độ hạt nào: session, driver-session, lap, event hay time-series?
+    \item Những cột nào là khóa join thật sự, và khóa đó có unique không?
+    \item Timestamp có parse được không, có thứ tự thời gian hợp lý không?
+    \item Có giá trị vật lý bất khả thi không, ví dụ duration âm hoặc speed ngoài miền hợp lý?
+    \item Endpoint này có khả năng chứa thông tin tương lai so với prediction moment không?
+\end{enumerate}
+
+Cách profiling này giúp tránh một sai lầm thường gặp: nhìn dữ liệu như một bảng phẳng ngay từ đầu. Trong thực tế, OpenF1 và FastF1 trả về một hệ sinh thái nhiều bảng, trong đó mỗi bảng có logic nghiệp vụ riêng. Ví dụ, \texttt{session\_results} là nguồn nhãn sau phiên; nếu xử lý nó như một bảng feature bình thường, pipeline sẽ rò rỉ kết quả cuối cùng. Ngược lại, \texttt{weather} không phải nhãn, nhưng nếu join bằng quan sát sau lap hiện tại thì vẫn có leakage thời gian.
+
+\subsection{Phân loại lỗi dữ liệu}
+Trong quá trình profiling, lỗi dữ liệu được chia thành bốn nhóm:
+
+\begin{itemize}
+    \item \textbf{Lỗi schema}: cột thiếu, kiểu dữ liệu thay đổi, tên cột không đồng nhất giữa phiên.
+    \item \textbf{Lỗi domain}: giá trị không hợp lý theo tri thức F1, ví dụ lap duration không dương.
+    \item \textbf{Lỗi grain}: bảng không unique theo khóa dự kiến hoặc join có nguy cơ nhân dòng.
+    \item \textbf{Lỗi thời gian}: timestamp không parse được, lệch thứ tự, hoặc quan sát có thể nằm sau prediction moment.
+\end{itemize}
+
+Điểm quan trọng là mỗi loại lỗi cần cách xử lý khác nhau. Lỗi schema thường cần chuẩn hóa hoặc bỏ qua cột optional. Lỗi domain cần flag, null hóa hoặc loại bỏ tùy mức độ. Lỗi grain cần aggregate hoặc chọn backbone mới. Lỗi thời gian cần as-of join, shift hoặc loại khỏi feature list. Việc gom tất cả thành ``missing value handling'' sẽ làm mất bản chất vấn đề. Các rủi ro này được tổng hợp theo từng nhóm endpoint trong Bảng~\ref{tab:riskbyendpoint}.
+
+\begin{table*}[htbp]
+\caption{Rủi ro chính theo nhóm endpoint}
+\label{tab:riskbyendpoint}
+\centering
+\begin{tabular}{p{0.16\linewidth}p{0.22\linewidth}p{0.44\linewidth}}
+\toprule
+Nhóm endpoint & Rủi ro chính & Quyết định xử lý \\
+\midrule
+Session/meeting & Metadata lặp hoặc không cùng khóa & Chuẩn hóa keys, giữ làm context, không để nhân dòng. \\
+Driver/result/grid & Có outcome hoặc context phụ thuộc thời điểm & Tách outcome khỏi feature; grid chỉ dùng có điều kiện. \\
+Laps & Backbone có lap thiếu/invalid/outlier & Flag missing/invalid, kiểm tra duplicate theo driver-lap. \\
+Weather & Tần suất thấp, không khớp lap timestamp & Backward as-of join với tolerance. \\
+Stints & Lap ranges có thể overlap hoặc thiếu compound & Match theo lap range, thêm cờ \texttt{has\_stint\_match}. \\
+Pit/race control & Event của lap hiện tại dễ leakage & Tạo cả current diagnostics và before-lap counters. \\
+Overtakes & Event thưa, phụ thuộc timestamp & Tích lũy theo thời điểm dự đoán. \\
+Telemetry/location & Kích thước lớn, tần suất cao & Tổng hợp previous-lap thay vì join raw. \\
+Position/intervals & Có thể phản ánh trạng thái race hiện tại/tương lai & Clean để tham khảo, không dùng bừa trong model-safe features. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[htbp]
+\caption{Các quyết định clean chính}
+\label{tab:cleaning}
+\centering
+\begin{tabular}{p{0.18\linewidth}p{0.22\linewidth}p{0.44\linewidth}}
+\toprule
+Nhóm dữ liệu & Xử lý & Lý do \\
+\midrule
+Keys & Ép kiểu session, meeting, driver, lap keys & Tránh lỗi join âm thầm do lệch kiểu int/string. \\
+Timestamps & Parse datetime, bỏ hoặc flag dòng không có mốc thời gian usable & Cần timestamp đơn điệu để align time-series. \\
+Lap duration & Flag missing/invalid, chuyển invalid sang null & Không biến lap bất thường thành pace hợp lệ giả. \\
+Speed/sector & Áp dụng domain bounds và invalid flags & Tránh lỗi sensor làm méo phân phối. \\
+Weather & Chuẩn hóa measurement và loại giá trị vật lý bất khả thi & Weather là context, cần tránh join giá trị sai. \\
+Stints & Chuẩn hóa lap ranges và tyre age & Stint matching cần khoảng lap nhất quán. \\
+Race control & Chuẩn hóa lap/event fields & Message pre/post-race có thể không map vào lap. \\
+Pit/overtakes & Chuẩn hóa event timestamp/lap & Event phải chuyển thành counters theo prediction moment. \\
+Telemetry/location & Lưu Parquet & CSV không phù hợp với time-series rất lớn. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Xử lý missing và các trường hợp DNF}
+
+\texttt{lap\_duration} là một biến trung tâm trong dataset cấp vòng đua, tuy nhiên có thể bị thiếu hoặc không hợp lệ do nhiều nguyên nhân như DNF, bị xóa lap, cờ đỏ, sai lệch hệ thống thời gian hoặc lỗi từ nguồn dữ liệu.
+
+Pipeline không loại bỏ toàn bộ các bản ghi này một cách mặc định. Thay vào đó, các trường hợp thiếu hoặc không hợp lệ được xử lý bằng cách tạo các cờ trạng thái như \texttt{is\_missing\_lap\_duration} và \texttt{is\_invalid\_lap\_duration}. Các giá trị không hợp lệ được chuyển về null để đảm bảo an toàn trong các phép tính số học, trong khi bản ghi vẫn được giữ lại nếu còn giá trị trong các trường thông tin khác phục vụ phân tích hoặc kiểm toán.
+
+Cách tiếp cận này giúp cân bằng giữa tính sạch của dữ liệu và việc bảo toàn thông tin nghiệp vụ. Việc loại bỏ toàn bộ các bản ghi liên quan đến DNF có thể làm mất các tình huống quan trọng trong cuộc đua, trong khi việc nội suy (imputation) không phù hợp có thể tạo ra các giá trị sai lệch về hiệu suất. Do đó, việc sử dụng cơ chế gắn cờ (flagging) cho phép kiểm soát chất lượng dữ liệu mà vẫn giữ được tính đầy đủ của bối cảnh.
+
+Nguyên tắc này phù hợp với mục tiêu của đồ án về xây dựng bộ dữ liệu có khả năng tái lập và hạn chế rò rỉ dữ liệu, trong đó dữ liệu nhiễu hoặc bất thường vẫn được giữ lại có kiểm soát thay vì bị loại bỏ hoàn toàn. Đặc biệt trong bối cảnh Formula 1, các giá trị ngoại lệ thường mang ý nghĩa nghiệp vụ quan trọng, ví dụ như ảnh hưởng của cờ vàng, pit-stop hoặc sự cố kỹ thuật, thay vì chỉ đơn thuần là lỗi đo lường.
+
+\subsection{Domain bounds và outlier flags}
+
+Pipeline phân biệt rõ giữa các giá trị không thể xảy ra về mặt vật lý và các quan sát bất thường nhưng hợp lệ về mặt nghiệp vụ. Các giá trị như duration âm hoặc tốc độ vượt ngưỡng vật lý được xem là lỗi dữ liệu và được xử lý tương ứng. Ngược lại, các trường hợp như lap chậm do safety car, pit-stop hoặc ảnh hưởng giao thông được coi là các quan sát hợp lệ trong bối cảnh thi đấu. Do đó, nhiều giá trị bất thường được gắn cờ thay vì loại bỏ.
+
+\subsection{Deduplication}
+
+Dataset cuối được đảm bảo tính duy nhất theo khóa:
+
+\begin{lstlisting}
+session_key + driver_number + lap_number
+\end{lstlisting}
+
+Kết quả kiểm tra cho thấy không tồn tại bản ghi trùng khóa, đảm bảo tính nhất quán của dữ liệu ở cấp độ lap.
+
+\subsection{Telemetry và location}
+
+Hai tập dữ liệu \texttt{car\_data.parquet} (khoảng 4.56 GB) và \texttt{location.parquet} (khoảng 535 MB) không được join trực tiếp vào dataset chính nhằm tránh hiện tượng bùng nổ số lượng bản ghi. Thay vào đó, pipeline tổng hợp các đặc trưng theo từng vòng đua, bao gồm tốc độ trung bình, tốc độ cực đại, throttle, brake, RPM, gear, DRS và các đặc trưng không gian dựa trên quỹ đạo di chuyển.
+
+\subsection{Lý do sử dụng Parquet}
+
+Do kích thước lớn của telemetry và location data, việc sử dụng định dạng CSV sẽ gây chi phí lưu trữ và truy xuất cao. Định dạng Parquet được lựa chọn nhờ khả năng nén tốt, lưu trữ theo cột và hỗ trợ truy vấn chọn lọc dữ liệu hiệu quả. Trong pipeline này, CSV được sử dụng cho các bảng có kích thước nhỏ từ OpenF1, trong khi Parquet được áp dụng cho các tập dữ liệu lớn và dataset cuối nhằm tối ưu hiệu năng xử lý.
+
+\subsection{Quy tắc không chỉnh sửa dữ liệu thô}
+
+Toàn bộ quá trình xử lý dữ liệu được thực hiện thông qua code trong pipeline. Dữ liệu thô không được chỉnh sửa thủ công nhằm đảm bảo tính tái lập. Khi phát hiện lỗi dữ liệu, phương pháp xử lý là cập nhật logic trong pipeline và thực thi lại toàn bộ quy trình. Cách tiếp cận này đảm bảo mọi thay đổi đều được ghi nhận và có thể kiểm tra lại thông qua mã nguồn.
+
+\section{Feature engineering}
+\subsection{Grain cuối}
+Master dataset sử dụng grain:
+
+\begin{lstlisting}
+session_key + driver_number + lap_number
+\end{lstlisting}
+
+Grain này phù hợp với dự đoán live vì mô hình tương lai có thể cập nhật xác suất ở mỗi lap boundary.
+
+\subsection{Thuật toán xây dựng master dataset}
+Feature engineering bắt đầu từ bảng \texttt{laps} đã clean vì đây là bảng duy nhất có grain tự nhiên gần nhất với mục tiêu cuối. Các bảng khác không được join trực tiếp nếu chưa aggregate hoặc chưa kiểm soát thời điểm. Quy trình tổng quát:
+
+\begin{lstlisting}
+base = cleaned_laps
+base = join_session_metadata(base)
+base = join_driver_metadata(base)
+base = add_stint_and_tyre_features(base, stints)
+base = add_shifted_rolling_pace(base)
+base = merge_weather_asof_backward(base, weather)
+base = add_pit_counters(base, pit)
+base = add_race_control_counters(base, race_control)
+base = add_overtake_counters(base, overtakes)
+base = add_previous_lap_telemetry(base, car_data)
+base = add_previous_lap_location(base, location)
+base = add_outcome_labels(base, session_results)
+base = winsorize_safe_continuous_columns(base)
+base = move_outcomes_to_end(base)
+write master_dataset and metadata
+\end{lstlisting}
+
+Thứ tự này có chủ đích. Labels được thêm gần cuối và không nằm trong feature whitelist. Telemetry/location được tổng hợp previous-lap trước khi join. Weather được join bằng backward as-of. Event streams được chuyển thành counters theo lap boundary.
+
+\subsection{Kiểm soát leakage}
+Pipeline chia cột thành ba nhóm:
+
+\begin{itemize}
+    \item \textbf{Model-safe features}: giá trị biết trước lap \(N\), được lưu trong metadata.
+    \item \textbf{Current-lap diagnostics}: dùng cho EDA nhưng không dùng làm input.
+    \item \textbf{Outcome labels}: thứ hạng cuối và nhãn nhị phân.
+\end{itemize}
+
+Ví dụ feature an toàn:
+
+\begin{itemize}
+    \item \texttt{rolling\_avg\_lap\_3}, \texttt{rolling\_avg\_lap\_5}, \texttt{rolling\_avg\_lap\_10}
+    \item \texttt{pit\_stop\_count\_before\_lap}
+    \item \texttt{race\_control\_events\_before\_lap}
+    \item \texttt{tele\_prev\_speed\_mean}
+    \item \texttt{loc\_prev\_loc\_spread\_xy}
+\end{itemize}
+
+Các cột bị chặn gồm \texttt{target\_*}, \texttt{final\_position} và current-lap diagnostics. Audit xác nhận các cột này không nằm trong \texttt{model\_feature\_columns}.
+
+\begin{table}[htbp]
+\caption{Tóm tắt whitelist feature}
+\label{tab:whitelist}
+\centering
+\begin{tabular}{lr}
+\toprule
+Nhóm whitelist & Số cột xấp xỉ \\
+\midrule
+Pace/sector/speed & 7 \\
+Tyre/stint & 4 \\
+Rolling/race progress & 12 \\
+Weather & 6 \\
+Pit strategy safe & 5 \\
+Race-control safe & 5 \\
+Overtakes & 3 \\
+Telemetry previous-lap & 13 \\
+Location previous-lap & 11 \\
+Khác/context numeric & 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Bảng này không thay thế metadata, nhưng giúp người đọc thấy whitelist không phải một tập cột ngẫu nhiên. Nó bao phủ pace, strategy, environment, event history và dynamic telemetry, đồng thời loại khỏi outcome/current-lap diagnostics.
+
+\begin{table*}[htbp]
+\caption{Phân loại cột theo contract \texttt{live\_before\_lap\_n}}
+\label{tab:contract}
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.26\linewidth}p{0.38\linewidth}}
+\toprule
+Nhóm cột & Trạng thái & Lý do \\
+\midrule
+\texttt{target\_*} & Cấm làm input & Là nhãn sau phiên, biết kết quả tương lai. \\
+\texttt{final\_position} & Cấm làm input & Outcome trực tiếp của phiên. \\
+\texttt{*\_current\_lap} & Diagnostic only & Xảy ra trong lap đang dự đoán, không biết trước lap. \\
+\texttt{*\_before\_lap} & Model-safe & Chỉ dùng sự kiện trước khi lap bắt đầu. \\
+\texttt{tele\_prev\_*} & Model-safe & Tổng hợp từ lap trước. \\
+\texttt{loc\_prev\_*} & Model-safe & Tổng hợp tọa độ từ lap trước. \\
+Rolling pace đã shift & Model-safe & Không chứa lap hiện tại. \\
+Weather as-of backward & Model-safe có điều kiện & Chỉ hợp lệ khi timestamp không nằm sau lap và trong tolerance. \\
+Session metadata & Context & Hợp lệ nếu đã biết trước hoặc dùng để group/filter. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Điểm quan trọng là dataset có thể chứa nhiều hơn một loại cột. Một bảng vừa có thể phục vụ EDA vừa có thể phục vụ modeling nếu metadata phân biệt rõ cột nào an toàn. Cách làm này thực tế hơn việc xóa mọi diagnostic column, vì diagnostic columns giúp kiểm chứng rằng feature engineering đang phản ánh đúng race behavior.
+
+\begin{table*}[htbp]
+\caption{Nhóm đặc trưng trong master dataset}
+\label{tab:featuregroups}
+\centering
+\begin{tabular}{p{0.18\linewidth}p{0.30\linewidth}p{0.38\linewidth}}
+\toprule
+Nhóm & Ví dụ & Diễn giải theo prediction-time \\
+\midrule
+Context & \texttt{year}, \texttt{session\_type}, \texttt{circuit\_short\_name} & Metadata để lọc và phân nhóm. \\
+Lap pace & \texttt{lap\_duration}, sector durations, speed traps & Biểu diễn pace và sector performance. \\
+Quality flags & \texttt{is\_missing\_*}, \texttt{is\_outlier\_lap} & Cờ chất lượng dữ liệu và bất thường domain. \\
+Tyre/stint & \texttt{current\_tyre\_age}, \texttt{laps\_until\_cliff} & Trạng thái lốp và stint. \\
+Rolling pace & \texttt{rolling\_avg\_lap\_5}, \texttt{lap\_delta\_prev} & Pace lịch sử đã shift. \\
+Race progress & \texttt{laps\_to\_go}, \texttt{race\_completion\_pct} & Ngữ cảnh tiến trình race. \\
+Weather & \texttt{track\_temperature}, \texttt{rainfall} & Điều kiện môi trường join backward. \\
+Pit strategy & \texttt{pit\_stop\_count\_before\_lap} & Lịch sử pit trước lap. \\
+Race control & \texttt{yellow\_flag\_previous\_lap} & Trạng thái cờ/sự kiện trước lap. \\
+Overtakes & \texttt{net\_overtakes\_so\_far} & Diễn biến cạnh tranh tích lũy. \\
+Telemetry prev & \texttt{tele\_prev\_speed\_mean} & Telemetry tổng hợp từ lap \(N-1\). \\
+Location prev & \texttt{loc\_prev\_loc\_spread\_xy} & Spatial summaries từ lap \(N-1\). \\
+Outcomes & \texttt{final\_position}, \texttt{target\_win} & Nhãn/outcome, không dùng làm input. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Rolling pace}
+Rolling features được shift trước khi tính toán để lap \(N\) không dùng chính lap \(N\). Pipeline dùng cửa sổ 3, 5 và 10 laps. Window 3 phản ứng nhanh với thay đổi pace; window 5 làm mượt nhiễu ngắn; window 10 mô tả form dài hơn trong stint.
+
+Về mặt toán học, rolling average hợp lệ cho lap \(N\) được định nghĩa:
+
+\begin{equation}
+\text{rollavg}_{w}(N) = \frac{1}{w}\sum_{i=N-w}^{N-1} \text{lap\_duration}(i)
+\end{equation}
+
+trong đó \(w\) là kích thước cửa sổ. Chỉ số tổng dừng ở \(N-1\), không bao gồm \(N\). Nếu tính rolling trước rồi mới shift sai cách, lap hiện tại có thể lọt vào feature. Vì vậy, shift là một phần của định nghĩa feature, không phải bước trang trí sau cùng.
+
+\subsection{Lap progress features}
+Hai cột \texttt{laps\_to\_go} và \texttt{race\_completion\_pct} cho phép mô hình tương lai phân biệt cùng một trạng thái ở các thời điểm khác nhau. Một tay đua có pace tốt ở lap đầu chưa chắc có xác suất thắng cao nếu còn nhiều lap và chưa pit. Ngược lại, pace tốt ở cuối race có ý nghĩa mạnh hơn. Race progress cũng giúp diễn giải chiến thuật pit: pit sớm, pit giữa race và pit muộn không tương đương.
+
+\subsection{Tyre cliff}
+Các feature lốp gồm \texttt{current\_tyre\_age}, \texttt{compound\_cliff}, \texttt{laps\_until\_cliff}, \texttt{is\_past\_cliff}. Tyre cliff được học theo hướng hybrid: dùng dữ liệu quan sát nhưng bị ràng buộc bởi domain bounds để tránh noise đầu stint. Metadata cuối ghi nhận: SOFT 22, MEDIUM 39, HARD 45, INTERMEDIATE 22, WET 15, UNKNOWN 24.
+
+Tyre cliff là một ví dụ cho thấy feature engineering không chỉ là phép join. Nếu chỉ dùng \texttt{tyre\_age}, mô hình tương lai phải tự học quan hệ phi tuyến giữa tuổi lốp và pace. Feature \texttt{laps\_until\_cliff} đưa vào tri thức domain: lốp thường có giai đoạn ổn định rồi suy giảm nhanh. Tuy nhiên, cliff không nên học hoàn toàn từ một vài stint nhiễu, vì safety car hoặc traffic có thể tạo ra lap duration tăng giả. Do đó, pipeline kết hợp tín hiệu dữ liệu với bounds theo compound.
+
+\begin{table}[htbp]
+\caption{Tyre cliff được ghi trong metadata}
+\label{tab:tyrecliff}
+\centering
+\begin{tabular}{lr}
+\toprule
+Compound & Cliff lap trong stint \\
+\midrule
+SOFT & 22 \\
+MEDIUM & 39 \\
+HARD & 45 \\
+INTERMEDIATE & 22 \\
+WET & 15 \\
+UNKNOWN & 24 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{As-of join với tolerance}
+Weather và một số time-series được align bằng backward \texttt{merge\_asof} thay vì exact timestamp. Direction backward đảm bảo không lấy quan sát tương lai. Tolerance giúp tránh kéo một quan sát quá cũ vào lap hiện tại. Weather hiện dùng tolerance 10 phút.
+
+Nếu dùng exact join, weather gần như không khớp hoàn toàn với lap timestamp. Nếu dùng nearest join, quan sát sau lap có thể được chọn. Nếu forward-fill không tolerance, một quan sát quá cũ có thể đại diện sai cho điều kiện hiện tại. Backward as-of với tolerance là lựa chọn cân bằng: nó giữ quan sát gần nhất đã biết, nhưng không cho phép khoảng cách thời gian quá xa.
+
+\subsection{Weather feature design}
+Weather features bao gồm \texttt{air\_temperature}, \texttt{track\_temperature}, \texttt{humidity}, \texttt{rainfall}, \texttt{wind\_speed} và \texttt{track\_temp\_evolution}. \texttt{track\_temp\_evolution} biểu diễn xu hướng biến đổi nhiệt độ mặt đường, hữu ích hơn chỉ nhìn nhiệt độ tuyệt đối. Trong F1, cùng một track temperature có thể có ý nghĩa khác nhau nếu đang tăng nhanh hoặc giảm nhanh do mây, mưa hoặc thời gian trong ngày.
+
+\subsection{Event features}
+Pit, race-control và overtakes được chuyển thành counters theo thời điểm dự đoán. Phân biệt \texttt{before\_lap} và \texttt{current\_lap} là quyết định cốt lõi. Current-lap columns hữu ích để EDA câu hỏi như ``pit lap có chậm hơn không'', nhưng không hợp lệ để predict trước khi lap bắt đầu.
+
+\subsection{Pit strategy features}
+Pit features được chia thành hai nhóm. Nhóm diagnostic mô tả pit ở chính lap hiện tại, như \texttt{is\_pit\_current\_lap}. Nhóm model-safe mô tả lịch sử trước lap, như \texttt{pit\_stop\_count\_before\_lap}, \texttt{pit\_duration\_sum\_before\_lap}, \texttt{was\_pit\_previous\_lap} và \texttt{laps\_since\_last\_pit}. Sự phân tách này giữ được giá trị phân tích của pit laps mà không phá contract dự đoán.
+
+\subsection{Race-control features}
+Race-control events như cờ vàng hoặc green flag có ảnh hưởng lớn đến pace và khả năng vượt xe. Pipeline tạo \texttt{race\_control\_events\_before\_lap}, \texttt{yellow\_flag\_events\_before\_lap}, \texttt{green\_flag\_events\_before\_lap}, \texttt{race\_control\_events\_so\_far} và \texttt{yellow\_flag\_previous\_lap}. Các cột current-lap vẫn được giữ để audit, nhưng không nằm trong whitelist. Đây là cách cân bằng giữa tính phân tích và tính triển khai thật.
+
+\subsection{Overtake features}
+Overtakes được biểu diễn thành \texttt{overtakes\_made\_so\_far}, \texttt{overtakes\_lost\_so\_far} và \texttt{net\_overtakes\_so\_far}. Nhóm này cho biết tay đua đang có xu hướng tiến lên hay mất vị trí trong cuộc đua. Tuy nhiên, overtake events thường thưa và phụ thuộc chất lượng ghi nhận, vì vậy sau này khi train model cần kiểm tra bias theo session/circuit.
+
+\subsection{Telemetry previous-lap features}
+Telemetry previous-lap features gồm speed max/min/mean/std, throttle mean/q90, brake mean/sum, RPM mean/std, gear mean/max và DRS sum. Các thống kê này không cố gắng tái tạo toàn bộ trace của xe, mà nén hành vi vận hành thành tín hiệu có thể học được. Ví dụ, \texttt{tele\_prev\_brake\_sum} có thể phản ánh lap có nhiều vùng phanh hoặc bất thường; \texttt{tele\_prev\_speed\_std} phản ánh độ biến thiên tốc độ trong lap trước.
+
+\subsection{Location previous-lap features}
+Location features gồm min/max/std của tọa độ X/Y/Z, bounding box area và spread XY. Mục tiêu không phải vẽ đường đua trong model table, mà là biểu diễn mức độ phủ tọa độ và tính ổn định spatial của lap trước. Race replay trong app dùng \texttt{location.parquet} trực tiếp, còn master dataset chỉ giữ summary để tránh bảng quá lớn.
+
+\subsection{Winsorization}
+Winsorization chỉ áp dụng thận trọng cho biến liên tục. Pipeline tránh winsorize nhãn, count/event features, boolean flags và outcome-support columns. Ví dụ \texttt{final\_position} là outcome, không phải sensor reading; \texttt{race\_control\_events\_before\_lap} là count, không nên clip như biến liên tục.
+
+\section{Mô tả dataset cuối}
+\subsection{Shape và labels}
+Master dataset cuối có:
+
+\begin{itemize}
+    \item 82.535 dòng
+    \item 112 cột
+    \item 69 đặc trưng số model-safe
+    \item 0 dòng trùng grain
+\end{itemize}
+
+Các outcome ở cuối file:
+
+\begin{lstlisting}
+final_position
+target_win
+target_podium
+target_top10
+\end{lstlisting}
+
+\begin{table}[htbp]
+\caption{Phân phối nhãn trong dataset cuối}
+\label{tab:targets}
+\centering
+\begin{tabular}{lrr}
+\toprule
+Nhãn & Dòng positive & Tỷ lệ positive \\
+\midrule
+\texttt{target\_win} & 4.566 & 5.53\% \\
+\texttt{target\_podium} & 13.750 & 16.66\% \\
+\texttt{target\_top10} & 46.013 & 55.75\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Class imbalance là điều tự nhiên. Trong mỗi race, chỉ có một người thắng và chỉ ba vị trí podium.
+
+\subsection{Ý nghĩa của ba nhãn}
+Ba nhãn được giữ đồng thời vì chúng đại diện cho ba mức khó khác nhau của bài toán. \texttt{target\_win} là nhãn hiếm nhất và phù hợp cho bài toán xác suất chiến thắng. \texttt{target\_podium} ít hiếm hơn, phản ánh khả năng đạt nhóm dẫn đầu. \texttt{target\_top10} có tỷ lệ positive cao hơn, phản ánh khả năng kết thúc trong nhóm cạnh tranh. Việc giữ cả ba nhãn giúp dataset linh hoạt cho nhiều câu hỏi nghiên cứu mà không cần rebuild pipeline.
+
+Ba nhãn này cũng có giá trị kiểm tra chất lượng. Nếu \texttt{target\_win} có tỷ lệ quá cao, có thể pipeline đã join sai kết quả hoặc lặp winner sai cách. Nếu \texttt{target\_top10} quá thấp trong race sessions, có thể kết quả phân loại không được parse đúng. Vì vậy, phân phối nhãn vừa phục vụ EDA vừa là sanity check.
+
+\subsection{Cleaning row accounting}
+
+\begin{table}[htbp]
+\caption{Một số thống kê trước/sau clean}
+\label{tab:rows}
+\centering
+\begin{tabular}{lrrr}
+\toprule
+File & Raw & Clean & Dropped \\
+\midrule
+\texttt{sessions} & 180 & 180 & 0 \\
+\texttt{meetings} & 180 & 72 & 108 \\
+\texttt{drivers} & 3.717 & 3.717 & 0 \\
+\texttt{laps} & 86.008 & 82.535 & 3.473 \\
+\texttt{weather} & 15.194 & 15.182 & 12 \\
+\texttt{stints} & 9.400 & 9.392 & 8 \\
+\texttt{intervals} & 1.423.743 & 1.422.363 & 1.380 \\
+\texttt{position} & 116.928 & 116.856 & 72 \\
+\texttt{race\_control} & 10.078 & 9.451 & 627 \\
+\texttt{pit} & 8.057 & 8.057 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Coverage session}
+Dataset cuối chứa các năm 2024, 2025 và 2026. Artifact hiện tại có:
+
+\begin{itemize}
+    \item Race: 65.104 dòng
+    \item Qualifying: 17.431 dòng
+\end{itemize}
+
+Sprint tồn tại trong thiết kế nguồn và config, nhưng master dataset hiện tại không có sprint rows. Báo cáo ghi rõ điều này để tránh diễn giải quá mức.
+
+\subsection{Vì sao giữ Qualifying}
+Artifact hiện tại có Race và Qualifying. Bài toán chính hướng đến live race prediction, nhưng Qualifying vẫn là dữ liệu hợp lệ trong master artifact vì có cùng cấu trúc lap-level và có giá trị EDA/so sánh pace. Tuy nhiên, nếu sau này train mô hình cho race win-rate, người dùng nên lọc \texttt{session\_type == Race} hoặc thiết kế contract riêng cho Qualifying. Báo cáo ghi rõ điều này để tránh trộn hai loại phiên mà không có chủ đích.
+
+\subsection{Missingness trong dataset cuối}
+Tỷ lệ thiếu trung bình toàn bảng khoảng 7.2\%. Con số này không nên được hiểu như một lỗi đồng đều trên mọi cột. Một số nhóm như metadata và lap backbone có coverage cao; telemetry/location previous-lap có coverage thấp hơn do phụ thuộc FastF1. Với thiết kế hiện tại, missingness là thông tin cần được quản lý, không phải luôn cần impute. Nếu impute toàn bộ telemetry bằng trung bình, mô hình tương lai có thể học tín hiệu giả và đánh giá quá lạc quan.
+
+\subsection{Audit cuối}
+
+\begin{table}[htbp]
+\caption{Tóm tắt audit master dataset}
+\label{tab:audit}
+\centering
+\begin{tabular}{p{0.48\linewidth}p{0.26\linewidth}}
+\toprule
+Kiểm tra & Kết quả \\
+\midrule
+Rows & 82.535 \\
+Columns & 112 \\
+Duplicate grain rows & 0 \\
+Model-safe features & 69 \\
+Blocked leakage trong feature list & Không có \\
+Telemetry previous-lap coverage & 71.24\% \\
+Location previous-lap coverage & 71.24\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Coverage 71.24\% của telemetry/location previous-lap là chấp nhận được với dữ liệu motorsport không đồng nhất, nhưng cần được xử lý cẩn thận khi train model sau này.
+
+\subsection{Tính toàn vẹn của labels}
+Labels được sinh từ \texttt{session\_results}. Đây là nguồn outcome sau phiên, vì vậy pipeline chỉ thêm labels ở cuối quá trình feature engineering và không đưa vào whitelist. Tính toàn vẹn label được kiểm tra gián tiếp qua tỷ lệ positive. \texttt{target\_win} có tỷ lệ 5.53\%, hợp lý với cấu trúc mỗi phiên có một winner lặp trên nhiều lap. Nếu tỷ lệ này quá cao hoặc quá thấp bất thường, đó sẽ là dấu hiệu lỗi join hoặc lỗi tạo label.
+
+\section{Phân tích khám phá dữ liệu}
+EDA được thực hiện ở hai mức: raw endpoint và final dataset. Raw EDA tập trung vào schema drift, missingness, mismatch grain, duplicate risk và leakage risk. Final EDA tập trung vào tính hữu ích của feature và tính hợp lệ của prediction contract.
+
+\subsection{Vai trò của EDA trong đồ án}
+EDA trong đồ án này không chỉ dùng để vẽ hình. Nó có ba vai trò. Thứ nhất, EDA raw giúp xác định chiến lược clean và join. Thứ hai, EDA feature giúp kiểm tra xem các đặc trưng mới có ý nghĩa nghiệp vụ hay không. Thứ ba, EDA final dataset giúp phát hiện leakage hoặc artifact bất thường trước khi bàn giao dataset. Vì môn học tập trung vào tiền xử lý, EDA là một phần của phương pháp luận, không phải phần trang trí báo cáo.
+
+\subsection{EDA raw endpoint}
+EDA raw chỉ ra rằng endpoint không thể join trực tiếp nếu chưa khai báo grain. \texttt{sessions} và \texttt{meetings} là session-level; \texttt{drivers} và results là driver-session-level; \texttt{laps} và \texttt{stints} là lap/stint-level; telemetry/location là time-series. Kết luận này dẫn đến quyết định lấy \texttt{laps} làm backbone.
+
+Một insight quan trọng khác là không phải endpoint nào crawl được cũng nên đưa vào feature. \texttt{team\_radio} có tiềm năng lớn vì chứa tín hiệu chiến thuật, nhưng để dùng đúng cần annotation hoặc NLP pipeline riêng. Đưa số lượng radio message vào feature chỉ để có thêm cột có thể tạo nhiễu và khó giải thích. Tương tự, \texttt{position} và \texttt{intervals} có thể phản ánh trạng thái race hiện tại; nếu không khóa prediction moment rõ, chúng có thể tạo leakage. Vì vậy, quyết định không dùng mọi endpoint là một quyết định có chủ đích.
+
+\subsection{EDA theo nhóm endpoint}
+Notebook EDA được thiết kế để mỗi nhóm endpoint có nhiều biểu đồ hữu ích. Pace được kiểm tra bằng phân phối, rolling trends và correlation. Tyre được kiểm tra theo compound, tyre age và cliff. Weather được xem vừa như phân phối riêng, vừa trong quan hệ với lap duration. Pit và race-control được xem như event process thưa, không phải biến liên tục thông thường. Telemetry/location được phân tích bằng coverage và previous-lap summaries.
+
+\begin{table*}[htbp]
+\caption{Nhóm biểu đồ EDA và câu hỏi phân tích}
+\label{tab:edaquestions}
+\centering
+\begin{tabular}{p{0.18\linewidth}p{0.36\linewidth}p{0.30\linewidth}}
+\toprule
+Nhóm EDA & Câu hỏi chính & Loại biểu đồ phù hợp \\
+\midrule
+Target & Nhãn có mất cân bằng không? & Bar chart, rate by progress. \\
+Pace & Pace phân phối ra sao, rolling pace có phân biệt nhóm outcome không? & Histogram, KDE, line plot, correlation. \\
+Tyre & Tuổi lốp và compound liên quan thế nào đến pace? & Boxplot, line by tyre age, compound comparison. \\
+Weather & Track temperature/rainfall có liên quan đến lap duration không? & Histogram, scatter/regression, time trend. \\
+Pit strategy & Pit count và thời điểm pit liên quan gì đến outcome? & Count plot, boxplot, grouped rate. \\
+Race control & Cờ vàng/race-control ảnh hưởng thế nào đến lap behavior? & Event count, event-conditioned plots. \\
+Telemetry & Previous-lap telemetry có coverage và phân phối hợp lý không? & Coverage bar, histogram, scatter. \\
+Location & Location summaries có bất thường lớn không? & Distribution, replay inspection. \\
+Correlation & Có nhóm biến nào trùng lặp hoặc quá tương quan không? & Spearman heatmap. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\subsection{Class imbalance}
+\texttt{target\_win} có positive rate 5.53\%. Đây không phải lỗi dữ liệu mà là bản chất của bài toán. Nếu sau này train model, accuracy thô không đủ vì model luôn dự đoán ``không thắng'' vẫn có thể đạt accuracy cao. Các metric như precision-recall, calibration hoặc ranking metrics phù hợp hơn.
+
+Class imbalance cũng ảnh hưởng đến cách diễn giải correlation. Một feature có tương quan nhỏ với \texttt{target\_win} vẫn có thể hữu ích nếu nó cải thiện ranking trong nhóm ứng viên có khả năng thắng. Vì vậy, EDA không nên loại feature chỉ vì correlation thấp. Correlation được dùng để phát hiện redundancy, leakage nghi ngờ hoặc quan hệ mạnh bất thường.
+
+\subsection{Race progress}
+\texttt{laps\_to\_go} và \texttt{race\_completion\_pct} biểu diễn rằng cùng một sự kiện có ý nghĩa khác nhau ở các thời điểm khác nhau. Pit ở lap 5 không giống pit ở lap 50. Tốc độ tốt ở đầu race không có cùng giá trị dự đoán với tốc độ tốt ở cuối race.
+
+\subsection{Pace và rolling windows}
+Rolling pace cho phép mô tả momentum mà không dùng dữ liệu current lap. Một lap riêng lẻ có thể nhiễu do traffic hoặc sự kiện cục bộ, còn rolling window cho tín hiệu ổn định hơn.
+
+\subsection{Tyre, weather và event features}
+Tyre age, compound và weather có thể ảnh hưởng gián tiếp đến pace. Pit-stop, cờ vàng và overtake là các event thưa nhưng giàu ý nghĩa chiến thuật. Vì vậy, EDA dùng count plot, cumulative summary và event-conditioned boxplot thay vì chỉ dùng scatter plot/correlation đơn giản.
+
+\subsection{Insight về telemetry/location}
+Telemetry và location không có coverage tuyệt đối, nhưng khi có dữ liệu, chúng bổ sung tín hiệu động mà bảng OpenF1 không có. Các cột \texttt{tele\_prev\_*} cho biết hành vi xe ở lap trước, còn \texttt{loc\_prev\_*} cho biết đặc điểm spatial của lap trước. Trong app, \texttt{location.parquet} còn được dùng để replay đường chạy. Việc tách hai mục tiêu này rất quan trọng: replay cần dữ liệu tọa độ chi tiết, còn master dataset chỉ cần summary để làm feature.
+
+\subsection{Correlation analysis}
+Notebook và app có Spearman correlation matrix cho dataset cuối. Spearman phù hợp hơn Pearson trong EDA này vì nhiều quan hệ là đơn điệu nhưng không tuyến tính, và nhiều biến là count/binary.
+
+\subsection{Từ EDA đến quyết định dữ liệu}
+Một điểm mạnh của quy trình là EDA không đứng tách rời pipeline. Các insight EDA đã dẫn đến quyết định cụ thể: dùng lap-level grain, không dùng team radio làm feature, phân biệt current-lap và before-lap events, dùng previous-lap telemetry, thêm metadata whitelist, và giữ labels ở cuối file. Đây là sự khác biệt giữa EDA mô tả và EDA có tác động đến kiến trúc dữ liệu.
+
+\section{Engineering và reproducibility}
+\subsection{Cấu trúc repo}
+
+\begin{lstlisting}
+apps/final_dataset_explorer/
+configs/
+data/raw/
+data/cleaned/
+data/processed/
+data/metadata/
+notebook/
+reports/data_quality/
+src/
+\end{lstlisting}
+
+Raw data, cleaned artifacts và processed artifacts được tách riêng. Người chấm có thể xóa layer generated và rebuild mà không đụng raw.
+
+\subsection{Tại sao không đặt mọi thứ trong notebook}
+Notebook rất phù hợp cho EDA nhưng không phải công cụ tốt nhất để vận hành pipeline tái lập. Nếu toàn bộ xử lý nằm trong notebook, kết quả phụ thuộc vào thứ tự chạy cell và trạng thái kernel. Vì vậy, project đưa logic chính vào \texttt{src/}, còn notebook dùng để khám phá và kiểm chứng. Đây là cách tách biệt giữa production-like pipeline và analytical workspace.
+
+\subsection{Cách chạy lại}
+
+\begin{lstlisting}
+pip install -r requirements.txt
+python run_e2e_pipeline.py
+\end{lstlisting}
+
+Config mặc định bỏ qua crawl để giảm thời gian và tránh phụ thuộc API.
+
+\subsection{Vai trò của config}
+\texttt{pipeline\_config.yaml} không chỉ là file tiện ích. Nó là hợp đồng vận hành của pipeline: năm bắt đầu/kết thúc, thư mục raw/cleaned/processed, metadata/report directory, tham số API và danh sách step cần chạy. Khi thầy/cô chạy lại project, chỉ cần đọc README và config là biết pipeline đang làm gì. Đây là một tiêu chí quan trọng của reproducibility.
+
+\subsection{Metadata như dataset card}
+\texttt{feature\_engineering\_metadata.json} được sinh tự động, chứa build timestamp, rows/cols, prediction contract, grain, model-safe feature columns, tyre cliffs và win rate. Đây là dataset card dạng machine-readable.
+
+Metadata đặc biệt quan trọng vì nó ngăn việc hard-code feature list ở nhiều nơi. Một training script tương lai có thể đọc \texttt{model\_feature\_columns} từ metadata. Nếu feature engineering thay đổi, metadata sẽ cập nhật theo. Cách này giảm rủi ro report nói một kiểu, code dùng một kiểu.
+
+\subsection{Streamlit app}
+App được chạy bằng:
+
+\begin{lstlisting}
+streamlit run apps/final_dataset_explorer/streamlit_app.py
+\end{lstlisting}
+
+App dùng để xem overview, audit, EDA charts, live contract và race replay từ tọa độ cleaned location. App không phải prediction app.
+
+App cũng đóng vai trò kiểm chứng trực quan. Ví dụ, nếu filter theo year/session/circuit mà số liệu không đổi, đó là dấu hiệu app chưa apply filter đúng. Nếu replay không thấy đường đua hoặc track bị dạng mạng nhện, đó là dấu hiệu xử lý tọa độ hoặc thứ tự điểm chưa ổn. Trong quá trình phát triển, các lỗi kiểu này giúp phát hiện vấn đề không dễ thấy trong bảng số.
+
+\subsection{Sanity checks}
+Project có nhiều lớp kiểm tra: cleaning summary, master audit, metadata whitelist, notebook EDA và app cùng đọc artifact cuối. Check quan trọng nhất là uniqueness của \texttt{session\_key + driver\_number + lap\_number}.
+
+\begin{table}[htbp]
+\caption{Sanity checks chính}
+\label{tab:sanity}
+\centering
+\begin{tabular}{p{0.38\linewidth}p{0.38\linewidth}}
+\toprule
+Kiểm tra & Ý nghĩa \\
+\midrule
+Duplicate grain = 0 & Dataset đúng độ hạt lap-level. \\
+Outcome columns ở cuối & Giảm nguy cơ nhầm label với feature. \\
+Blocked leakage không nằm trong whitelist & Bảo vệ prediction contract. \\
+Telemetry/location coverage > 30\% & Feature nhóm này đủ coverage để phân tích. \\
+Metadata feature count khớp code & Tránh lệch giữa report, code và artifact. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Khả năng mở rộng}
+Kiến trúc hiện tại có thể mở rộng theo ba hướng. Thứ nhất, thêm endpoint mới bằng cách viết cleaner và feature builder riêng. Thứ hai, thêm prediction contract mới, ví dụ pre-race, bằng cách tạo whitelist khác. Thứ ba, thêm data dictionary tự động từ schema và metadata. Cả ba hướng đều không yêu cầu sửa raw data.
+
+\section{Giới hạn và nguy cơ hợp lệ}
+\subsection{Giới hạn}
+
+\begin{itemize}
+    \item Artifact cuối là dataset, chưa phải mô hình dự đoán đã được validate.
+    \item Sprint rows chưa xuất hiện trong master dataset hiện tại.
+    \item Telemetry/location coverage chưa đạt 100\% vì phụ thuộc FastF1.
+    \item API có thể thay đổi schema trong tương lai.
+    \item Nhãn được lặp trên nhiều lap của cùng driver-session nên future train/test split phải theo session/time.
+\end{itemize}
+
+\subsection{Threats to validity}
+Ba rủi ro chính: nguồn dữ liệu ngoài có thể thay đổi; người dùng sau này có thể bỏ qua whitelist và train nhầm trên diagnostic/label; phạm vi 2024--2026 chưa đủ để kết luận tổng quát cho mọi mùa và quy định F1.
+
+\subsection{Hướng phát triển}
+Ưu tiên tiếp theo nên là cải thiện dataset, không phải train model ngay. Cần khôi phục sprint coverage nếu muốn phân tích sprint, tạo data dictionary tự động từ schema, tách contract Race/Qualifying, và thêm test fail nếu cột leakage lọt vào whitelist.
+
+\section{Đạo đức và quản trị dữ liệu}
+Dữ liệu dựa trên nguồn motorsport công khai, không chứa dữ liệu cá nhân nhạy cảm ngoài tên tay đua/đội đua vốn đã công khai. Rủi ro đạo đức chính là rủi ro phương pháp luận: phóng đại khả năng dự đoán, leakage, bias do thiếu telemetry, hoặc diễn giải correlation như causation.
+
+Đồ án giảm rủi ro bằng cách ghi rõ prediction contract, tách feature an toàn khỏi label/diagnostic, lưu metadata và giữ audit reports trong \texttt{reports/data\_quality}.
+
+\section{Kết luận}
+Đồ án đã xây dựng một bộ dữ liệu Formula 1 cấp vòng đua có khả năng tái lập và kiểm soát leakage cho bối cảnh \texttt{live\_before\_lap\_n}. Artifact cuối có 82.535 dòng, 112 cột, 69 đặc trưng số an toàn và 0 dòng trùng grain. Đóng góp chính nằm ở chất lượng tiền xử lý, khai báo grain, kiểm soát thời gian, metadata, audit và EDA, phù hợp với mục tiêu môn học là tiền xử lý và xây dựng bộ dữ liệu thay vì huấn luyện mô hình.
+
+\appendices
+\section{Datasheet cho dataset cuối}
+\subsection{Động cơ}
+Dataset được tạo để hỗ trợ nghiên cứu dự đoán live win-rate ở lap boundary. Mục tiêu trực tiếp là đồ án môn DS108; mục tiêu dài hạn là cung cấp benchmark sạch cho các thử nghiệm học có giám sát.
+
+Một động cơ khác là minh họa quy trình xây dựng dataset từ dữ liệu thật, nơi dữ liệu không đến dưới dạng một file CSV sạch duy nhất. F1 là ví dụ tốt vì có nhiều nguồn, nhiều grain, time-series lớn và outcome sau phiên. Những vấn đề này phản ánh đúng thách thức của Data Architecture trong thực tế.
+
+\subsection{Ai tạo dataset?}
+Dataset được tạo bởi nhóm đồ án. Dữ liệu raw đến từ OpenF1 và FastF1.
+
+\subsection{Thành phần}
+Mỗi instance là một driver-lap. Khóa là \texttt{session\_key + driver\_number + lap\_number}. Dataset có metadata phiên, metadata tay đua, pace, rolling pace, tyre/stint, weather, pit/race-control/overtake counters, previous-lap telemetry/location và labels.
+
+Dataset không chứa audio team radio gốc, không chứa nội dung hội thoại riêng tư, và không chứa dữ liệu cá nhân nhạy cảm. Các thông tin về tay đua và đội đua là thông tin thể thao công khai. Các cột telemetry/location được tổng hợp để phục vụ phân tích và không nhằm tái tạo dữ liệu điều khiển xe ở mức kỹ thuật sở hữu riêng.
+
+\subsection{Số lượng}
+Artifact hiện tại có 82.535 dòng và 112 cột. Metadata ghi nhận 69 numeric features an toàn cho model.
+
+\subsection{Missing values}
+Dataset vẫn có missing values. Đây là lựa chọn có chủ đích vì không nên bịa telemetry/location khi source không có. Future modeling phải xử lý missingness rõ ràng.
+
+Missingness có thể đến từ nhiều cơ chế: source không có dữ liệu, session không có FastF1 telemetry đầy đủ, lap bất thường, hoặc endpoint không áp dụng cho một loại phiên. Vì vậy, không nên dùng một chiến lược imputation duy nhất cho mọi cột. Với model sau này, nhóm metadata/lap pace, nhóm weather, nhóm event counters và nhóm telemetry/location nên được xử lý riêng.
+
+\subsection{Quy trình thu thập}
+Raw data được crawl từ OpenF1 và FastF1. Metadata ghi nhận 180 sessions trong giai đoạn 2024--2026. Khi chấm bài, pipeline mặc định không crawl lại.
+
+Quy trình crawl có thể chịu ảnh hưởng bởi giới hạn API, thay đổi schema và khả năng truy cập mạng. Vì lý do đó, artifact raw hiện có được xem là input ổn định cho bước chấm. Cấu hình mặc định tắt crawl không phải vì pipeline không hỗ trợ crawl, mà vì mục tiêu chấm là kiểm tra preprocessing và dataset construction có tái lập được từ raw đã nộp hay không.
+
+\subsection{Tiền xử lý}
+Các bước chính gồm chuẩn hóa kiểu, domain checks, missing/invalid flags, deduplication, endpoint-specific cleaning, as-of alignment, previous-lap aggregation và leakage-aware feature selection.
+
+Mọi bước tiền xử lý đều được thực thi bằng code. Không có bước nào yêu cầu chỉnh sửa thủ công raw file. Nếu một artifact generated bị xóa, pipeline có thể tạo lại từ raw và config. Đây là yêu cầu quan trọng để dataset có thể được xem là reproducible.
+
+\subsection{Cách dùng khuyến nghị}
+Dataset phù hợp cho EDA, audit, feature analysis và future supervised learning. Người dùng nên lấy feature list từ \texttt{model\_feature\_columns} trong metadata.
+
+Nếu dùng cho supervised learning, người dùng nên bắt đầu với các mô hình baseline đơn giản và kiểm tra calibration trước khi dùng mô hình phức tạp. Vì nhãn \texttt{target\_win} mất cân bằng, nên cần dùng metric phù hợp. Ngoài ra, cần split theo session hoặc theo thời gian để tránh cùng một driver-session xuất hiện ở cả train và test.
+
+\subsection{Cách dùng không khuyến nghị}
+Không dùng dataset như hệ thống cá cược thật, hệ thống ra quyết định an toàn, hoặc bằng chứng hiệu năng mô hình nếu chưa temporal validation. Không dùng outcome/current-lap diagnostics làm input cho contract live-before-lap.
+
+Không nên dùng dataset để so sánh trực tiếp năng lực tay đua ngoài bối cảnh dữ liệu. Kết quả race chịu ảnh hưởng bởi xe, chiến thuật đội, thời tiết, safety car và nhiều yếu tố ngoài cá nhân tay đua. Dataset này phục vụ bài toán dữ liệu và dự đoán xác suất, không phải đánh giá công bằng tuyệt đối giữa con người.
+
+\subsection{Split strategy}
+Nếu train model sau này, nên split theo session/event/time. Không nên random split theo dòng vì nhiều lap của cùng driver-session có cùng label.
+
+\subsection{Bảo trì}
+Khi raw data mới được thêm vào, nên chạy lại toàn bộ pipeline từ clean đến feature và kiểm tra các file audit. Nếu số dòng, số cột hoặc coverage thay đổi mạnh, cần cập nhật README, metadata, báo cáo và app. Nếu OpenF1/FastF1 thay đổi schema, cleaner phải được cập nhật trước khi tin vào dataset mới.
+
+\subsection{Bias và giới hạn}
+Dataset có thể thiên lệch theo những phiên có telemetry/location đầy đủ hơn. Một số circuit hoặc năm có thể được đại diện tốt hơn nhóm khác. Ngoài ra, dataset hiện tại không chứa sprint rows trong master artifact, nên mọi kết luận liên quan sprint là không hợp lệ nếu chưa rebuild. Những giới hạn này không làm dataset vô dụng, nhưng cần được ghi rõ để tránh misuse.
+
+\section{Codebook nhóm đặc trưng}
+
+\begin{table*}[htbp]
+\caption{Codebook rút gọn theo nhóm cột}
+\label{tab:codebook}
+\centering
+\begin{tabular}{p{0.20\linewidth}p{0.22\linewidth}p{0.42\linewidth}}
+\toprule
+Nhóm/prefix & Ví dụ & Ý nghĩa \\
+\midrule
+Identifiers & \texttt{session\_key}, \texttt{driver\_number} & Khóa định danh session, driver và lap. \\
+Session metadata & \texttt{year}, \texttt{session\_type} & Context để lọc và nhóm. \\
+Driver metadata & \texttt{full\_name}, \texttt{team\_name} & Thông tin công khai về tay đua/đội. \\
+Lap timing & \texttt{lap\_duration}, \texttt{duration\_sector\_1} & Thời gian lap/sector. \\
+Speed traps & \texttt{i1\_speed}, \texttt{st\_speed} & Tốc độ tại các điểm đo. \\
+Quality flags & \texttt{is\_invalid\_*} & Cờ chất lượng dữ liệu. \\
+Tyre/stint & \texttt{compound}, \texttt{current\_tyre\_age} & Trạng thái lốp/stint. \\
+Rolling pace & \texttt{rolling\_avg\_lap\_5} & Pace lịch sử đã shift. \\
+Weather & \texttt{track\_temperature} & Điều kiện môi trường. \\
+Pit strategy & \texttt{pit\_stop\_count\_before\_lap} & Lịch sử pit trước lap. \\
+Race control & \texttt{yellow\_flag\_previous\_lap} & Cờ và race-control context. \\
+Overtakes & \texttt{net\_overtakes\_so\_far} & Diễn biến vượt xe tích lũy. \\
+\texttt{tele\_prev\_*} & \texttt{tele\_prev\_speed\_mean} & Telemetry previous lap. \\
+\texttt{loc\_prev\_*} & \texttt{loc\_prev\_loc\_spread\_xy} & Location previous lap. \\
+Outcomes & \texttt{target\_win}, \texttt{final\_position} & Labels/outcomes. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Checklist output}
+Sau khi chạy pipeline mặc định, các file chính cần có:
+
+\begin{itemize}
+    \item \texttt{data/cleaned/*.csv}
+    \item \texttt{data/cleaned/car\_data.parquet}
+    \item \texttt{data/cleaned/location.parquet}
+    \item \texttt{data/processed/driver\_session\_base.csv}
+    \item \texttt{data/processed/driver\_session\_base.parquet}
+    \item \texttt{data/processed/master\_dataset.csv}
+    \item \texttt{data/processed/master\_dataset.parquet}
+    \item \texttt{data/metadata/feature\_engineering\_metadata.json}
+    \item \texttt{reports/data\_quality/cleaning\_summary.*}
+    \item \texttt{reports/data\_quality/master\_dataset\_audit.*}
+\end{itemize}
+
+\begin{thebibliography}{00}
+\bibitem{openf1} OpenF1, ``OpenF1 API Documentation,'' \url{https://openf1.org/}.
+\bibitem{fastf1} FastF1, ``FastF1 Documentation,'' \url{https://docs.fastf1.dev/}.
+\bibitem{gebru} T. Gebru, J. Morgenstern, B. Vecchione, J. W. Vaughan, H. Wallach, H. Daume III, and K. Crawford, ``Datasheets for Datasets,'' \emph{Communications of the ACM}, vol. 64, no. 12, pp. 86--92, 2021.
+\bibitem{ieee} IEEE, ``IEEE Conference Template,'' \url{https://www.ieee.org/conferences/publishing/templates.html}.
+\end{thebibliography}
+
+\end{document}

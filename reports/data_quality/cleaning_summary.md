@@ -1,13 +1,18 @@
-| file                |        raw_rows |      clean_rows |   dropped | status   |
-|:--------------------|----------------:|----------------:|----------:|:---------|
-| sessions.csv        |    72           |    72           |         0 | ok       |
-| drivers.csv         |  1486           |  1486           |         0 | ok       |
-| session_results.csv |   nan           |   nan           |       nan | skipped  |
-| laps.csv            | 56970           | 56674           |       296 | ok       |
-| weather.csv         |  8074           |  8068           |         6 | ok       |
-| stints.csv          |  2816           |  2791           |        25 | ok       |
-| starting_grid.csv   |   nan           |   nan           |       nan | skipped  |
-| intervals.csv       |     1.24838e+06 |     1.24718e+06 |      1205 | ok       |
-| position.csv        | 24656           | 24637           |        19 | ok       |
-| car_data.parquet    |     3.50593e+06 |     3.50593e+06 |         0 | ok       |
-| location.parquet    |     3.67802e+06 |     3.67802e+06 |         0 | ok       |
+| file                |   raw_rows |   clean_rows |   dropped | status   |
+|:--------------------|-----------:|-------------:|----------:|:---------|
+| sessions.csv        |        180 |          180 |         0 | ok       |
+| meetings.csv        |        180 |           72 |       108 | ok       |
+| drivers.csv         |       3717 |         3717 |         0 | ok       |
+| session_results.csv |       2784 |         2784 |         0 | ok       |
+| laps.csv            |      86008 |        82535 |      3473 | ok       |
+| weather.csv         |      15194 |        15182 |        12 | ok       |
+| stints.csv          |       9400 |         9392 |         8 | ok       |
+| starting_grid.csv   |       1377 |         1377 |         0 | ok       |
+| intervals.csv       |    1423743 |      1422363 |      1380 | ok       |
+| position.csv        |     116928 |       116856 |        72 | ok       |
+| race_control.csv    |      10078 |         9451 |       627 | ok       |
+| pit.csv             |       8057 |         8057 |         0 | ok       |
+| overtakes.csv       |      14127 |        14118 |         9 | ok       |
+| team_radio.csv      |       5892 |         5885 |         7 | ok       |
+| car_data.parquet    |   85151808 |     85151808 |         0 | ok       |
+| location.parquet    |   43062384 |     43062384 |         0 | ok       |

@@ -1,21 +1,4 @@
-"""
-src/crawler.py
-────────────────────────────────────────────────────────────────────────────
-Unified F1 Data Crawler — Bronze Layer
-────────────────────────────────────────────────────────────────────────────
-Module crawl chính thức và duy nhất của project. Tích hợp đầy đủ:
-  - Đọc cấu hình từ configs/pipeline_config.yaml
-  - Skip Existing: bỏ qua file đã tải, tránh crawl lại từ đầu
-  - Multithreading: tải nhiều endpoint song song (ThreadPoolExecutor)
-  - Rate Limiter: tự động chờ khi gần chạm giới hạn 30 req/phút của OpenF1
-  - FastF1 Telemetry: tải car_data/location chất lượng cao với lap_number + compound
 
-Kiến trúc:
-  run_crawler()               ← Hàm chính, được gọi từ run_e2e_pipeline.py
-    └── _process_session()    ← Xử lý một session
-          ├── _fetch_normal_endpoints()  ← Chạy song song (ThreadPoolExecutor)
-          └── _fetch_telemetry()         ← Chạy tuần tự (dữ liệu nặng)
-"""
 
 from __future__ import annotations
 

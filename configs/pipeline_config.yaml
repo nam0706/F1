@@ -2,10 +2,12 @@ project:
   name: F1_WinRate_Predictor
 
 execution:
-  # Cấu hình các bước Pipeline sẽ chạy. Xóa dòng để bỏ qua bước đó.
-  # Các tùy chọn: crawl, clean, base, feature
+  # Pipeline steps used by: python run_e2e_pipeline.py
+  # Valid steps: crawl, clean, base, feature
+  # Crawl is intentionally disabled for grading because it is slow and depends
+  # on OpenF1/FastF1 network availability. This rebuilds derived artifacts from
+  # existing data/raw files.
   steps_to_run:
-    - crawl
     - clean
     - base
     - feature
@@ -30,7 +32,7 @@ api:
 
 sessions:
   include_future_sessions: false
-  limit_sessions: 99  # Số lượng session tối đa mỗi năm (1 để test, ví dụ 99 để lấy hết)
+  limit_sessions: 99  # Used only when crawl is enabled.
   types:
     - Race
     - Sprint
@@ -38,6 +40,10 @@ sessions:
     - Sprint Shootout
     - Sprint Qualifying
 
+# NOTE:
+# The current crawler uses its internal endpoint list in src/crawler.py.
+# This section documents the expected raw artifacts. It is not used when crawl
+# is skipped, which is the default grading/rerun mode above.
 raw_endpoints:
   per_year:
     - meetings
@@ -49,8 +55,15 @@ raw_endpoints:
     - stints
     - position
     - race_control
+    - pit
+    - starting_grid
+    - session_result
+    - team_radio
+    - overtakes
+    - car_data
+    - location
 
 telemetry:
   enabled: true
   keep_raw: false
-  resample_interval: null   
+  resample_interval: null

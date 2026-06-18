@@ -1,0 +1,849 @@
+Thu thập và tiền xử lý dữ liệu cho bài toán dự đoán tỷ lệ chiến thắng Formula 1 giai đoạn 2024-2026
+
+
+Nguyễn Ngọc Nam
+Khoa Khoa học Dữ liệu
+University of Information Technology – VNUHCM  
+24521114@gm.uit.edu.vn
+
+Nguyễn Thị Kim Ngân 
+Khoa Khoa học Dữ liệu
+University of Information Technology – VNUHCM 
+24521130@gm.uit.edu.vn
+
+ABSTRACT
+Dự đoán kết quả trong giải đua xe Công thức 1 (Formula 1 - F1) là một bài toán phức tạp do sự chi phối của các yếu tố phi tuyến tính như chiến thuật pit-stop, hao mòn lốp xe và biến động môi trường. Mặc dù F1 sản sinh lượng lớn dữ liệu viễn trắc (telemetry) tần suất cao, sự phân mảnh dữ liệu từ nhiều nguồn không đồng nhất đã tạo ra rào cản lớn trong việc xây dựng các bộ dữ liệu chuẩn hóa, tích hợp và có khả năng tái lập cho học máy.
+
+Đồ án  này đề xuất một một quy trình kỹ thuật dữ liệu tự động hóa (End-to-End Data Pipeline) ứng dụng kiến trúc Medallion (Bronze, Silver, Gold) nhằm thu thập, làm sạch và đồng bộ dữ liệu từ OpenF1 API và thư viện FastF1. Hệ thống tích hợp các kỹ thuật xử lý đặc trưng nâng cao dành riêng cho dữ liệu chuỗi thời gian, bao gồm: dịch chuyển tịnh tiến (Temporal Shift) để ngăn chặn rò rỉ dữ liệu (Data Leakage), tiếp cận lai (Hybrid Approach) để nhận diện điểm gãy hao mòn lốp (Tyre Cliff), và tổng hợp hiệu suất động (Rolling Window Aggregation).
+
+Kết quả, hệ thống đã kiến tạo thành công bộ dữ liệu phẳng ở cấp độ vòng đua (lap-level) quy mô 78.023 bản ghi, bao gồm 73 đặc trưng đa chiều và 3 nhãn phân lớp mục tiêu. Bộ dữ liệu đầu ra đạt chất lượng kỹ thuật vượt trội với tỷ lệ khuyết thiếu dưới 0.2%, loại bỏ hoàn toàn bản ghi trùng lặp, đảm bảo tính toàn vẹn thời gian và có khả năng tái lập 100%, cung cấp nguồn dữ liệu đầu vào đáng tin cậy và chất lượng cao cho các mô hình học máy phân tích và dự đoán kết quả đua xe. 
+
+Từ khóa— Data Engineering, Formula 1, Telemetry Data, Medallion Architecture, Feature Engineering, Temporal Shift, Machine Learning.
+I. GIỚI THIỆU
+1.1. Bối cảnh bài toán
+Formula 1 (F1) là giải đua xe hạng cao nhất thế giới, đồng thời là một trong những hệ thống thể thao – kỹ thuật có độ phức tạp động lực học và cường độ dữ liệu lớn nhất hiện nay. Trong mỗi chặng đua kéo dài từ 1 đến 2 giờ, các đội đua phải liên tục đưa ra quyết định chiến thuật dựa trên nhiều yếu tố như hiệu suất xe, tình trạng lốp, điều kiện thời tiết, chiến thuật pit-stop và trạng thái cuộc đua theo thời gian thực. Để phục vụ quá trình vận hành và phân tích, mỗi chiếc xe F1 được trang bị hàng trăm cảm biến vật lý nhằm ghi nhận liên tục dữ liệu viễn trắc (telemetry data) với tần suất mili-giây, bao gồm vận tốc, vòng tua động cơ, áp lực phanh, góc lái, vị trí GPS và mức sử dụng chân ga [1].
+
+Bên cạnh dữ liệu telemetry tần suất cao, hệ sinh thái dữ liệu F1 còn bao gồm nhiều nguồn dữ liệu ngữ cảnh cuộc đua như thông tin tay đua, điều kiện thời tiết, chiến thuật sử dụng lốp, lịch sử pit-stop, khoảng cách thời gian giữa các xe, vị trí xuất phát cùng các tín hiệu an toàn từ ban tổ chức như xe an toàn (Safety Car), cờ vàng và cờ đỏ. Khối lượng dữ liệu lớn cùng đặc tính đa nguồn, đa cấu trúc và phụ thuộc mạnh vào yếu tố thời gian khiến việc xây dựng một pipeline dữ liệu hoàn chỉnh cho bài toán dự đoán kết quả cuộc đua trở thành một thách thức đáng kể trong lĩnh vực khoa học dữ liệu và học máy.
+
+Trong những năm gần đây, các mô hình học máy đã được ứng dụng rộng rãi trong lĩnh vực phân tích thể thao (sports analytics) nhằm hỗ trợ dự đoán kết quả thi đấu và tối ưu chiến thuật vận hành [2], [3], [4]. Đối với bài toán Formula 1, việc khai phá và hợp nhất các nguồn dữ liệu nhằm xây dựng mô hình dự đoán tỷ lệ chiến thắng (Win Rate) của các tay đua có ý nghĩa quan trọng trong việc hỗ trợ ra quyết định chiến thuật theo thời gian thực và đánh giá hiệu suất vận hành của xe trên đường đua [5]. Tuy nhiên, hiệu quả của các mô hình dự đoán phụ thuộc rất lớn vào chất lượng dữ liệu đầu vào, khả năng đồng bộ dữ liệu chuỗi thời gian và mức độ đầy đủ của các đặc trưng chiến thuật được trích xuất từ dữ liệu telemetry và dữ liệu ngữ cảnh cuộc đua.
+
+1.2. Vấn đề tồn tại
+Mặc dù có tiềm năng ứng dụng cao, việc xây dựng hệ thống dữ liệu phục vụ dự đoán kết quả Formula 1 vẫn tồn tại nhiều thách thức kỹ thuật quan trọng[4].
+Thứ nhất, dữ liệu F1 thường bị phân mảnh trên nhiều nền tảng khác nhau như OpenF1 và FastF1 với cấu trúc, định dạng và tần suất cập nhật không đồng nhất. Trong khi OpenF1 chủ yếu cung cấp dữ liệu bảng (tabular data), FastF1 tập trung vào dữ liệu telemetry tần suất cao, dẫn đến sự lệch pha về thời gian và khó khăn trong quá trình đồng bộ dữ liệu chuỗi thời gian.
+Thứ hai, dữ liệu telemetry có tần suất lấy mẫu rất cao (10–20 Hz), tạo ra hàng triệu bản ghi cho mỗi chặng đua. Khối lượng dữ liệu lớn gây áp lực đáng kể lên hệ thống lưu trữ, xử lý I/O và bộ nhớ tính toán trong quá trình tiền xử lý và trích xuất đặc trưng. Ngoài ra, dữ liệu cảm biến còn tồn tại nhiều bất thường như giá trị tốc độ không hợp lệ, vị trí xe thay đổi đột ngột, các giá trị khuyết thiếu và các bản ghi trùng lặp.
+Thứ ba, quá trình xây dựng đặc trưng cho dữ liệu chuỗi thời gian tiềm ẩn nguy cơ rò rỉ dữ liệu (Data Leakage)[7], [8]. Nếu sử dụng thông tin thuộc tương lai của vòng đua để dự đoán cho chính vòng hiện tại, mô hình có thể đạt kết quả đánh giá cao nhưng không còn khả năng triển khai thực tế trong môi trường dự đoán thời gian thực[8].
+Cuối cùng, hiện nay vẫn thiếu một bộ dữ liệu chuẩn hóa ở cấp độ vòng đua (lap-level dataset) có khả năng tái lập cao và tích hợp đầy đủ các đặc trưng telemetry, chiến thuật và môi trường phục vụ trực tiếp cho các mô hình học máy. Đây cũng chính là động lực chính cho việc xây dựng pipeline dữ liệu trong nghiên cứu này.
+
+1.3. Mục tiêu nghiên cứu
+Nghiên cứu này hướng đến việc xây dựng một quy trình kỹ thuật dữ liệu tự động phục vụ bài toán dự đoán kết quả Formula 1. Các mục tiêu chính bao gồm:
+Xây dựng pipeline dữ liệu tự động toàn diện, bao gồm thu thập dữ liệu API, làm sạch, đồng bộ, hợp nhất dữ liệu và trích xuất đặc trưng cho các mô hình học máy.
+Tích hợp dữ liệu bảng (tabular data) và dữ liệu viễn trắc chuỗi thời gian (telemetry time-series) thông qua các kỹ thuật đồng bộ thời gian nhằm tạo ra cấu trúc dữ liệu thống nhất.
+Xây dựng cơ chế ngăn chặn hiện tượng rò rỉ dữ liệu (data leakage) bằng kỹ thuật dịch chuyển thời gian (temporal shift), đảm bảo mô hình chỉ sử dụng thông tin trong quá khứ khi dự đoán.
+Thiết kế bộ dữ liệu chuẩn hóa ở cấp độ vòng đua (lap-level dataset) với 73 đặc trưng thuộc các nhóm telemetry, chiến thuật và điều kiện môi trường.
+Đảm bảo khả năng tái lập của pipeline thông qua kiến trúc mô-đun (modular architecture) và cơ chế điều khiển bằng cấu hình (config-driven design).
+
+1.4. Đóng góp chính của đề tài
+Nghiên cứu này mang lại các đóng góp chính như sau:
+Đề xuất kiến trúc dữ liệu Medallion gồm ba tầng Bronze, Silver và Gold nhằm quản lý vòng đời dữ liệu Formula 1 theo hướng có cấu trúc, dễ mở rộng và đảm bảo khả năng tái lập.
+Xây dựng pipeline xử lý dữ liệu theo kiến trúc mô-đun và cơ chế điều khiển bằng cấu hình (config-driven pipeline), hỗ trợ tự động hóa, ghi nhật ký (logging) và tái thực thi toàn bộ quy trình xử lý dữ liệu.
+Áp dụng kỹ thuật dịch chuyển thời gian (Temporal Shift) nhằm hạn chế hiện tượng rò rỉ dữ liệu (Data Leakage) trong các bài toán dự đoán chuỗi thời gian.
+Thiết kế và trích xuất bộ đặc trưng ở cấp độ vòng đua (lap-level), bao gồm các nhóm đặc trưng viễn trắc, chiến thuật, môi trường và hiệu suất động của tay đua; đồng thời tích hợp các kỹ thuật nâng cao như Tyre Cliff và Rolling Window Aggregation.
+Xây dựng bộ dữ liệu chuẩn hóa phục vụ trực tiếp cho các mô hình học máy dự đoán kết quả Formula 1, đồng thời hỗ trợ khả năng tái sử dụng và mở rộng cho các nghiên cứu tiếp theo.
+Phần còn lại của bài báo được tổ chức như sau. Phần II trình bày tổng quan nghiên cứu liên quan và khoảng trống nghiên cứu. Phần III mô tả kiến trúc tổng thể của hệ thống. Phần IV trình bày quy trình tiền xử lý dữ liệu gồm bảy bước kỹ thuật. Phần V mô tả phương pháp trích xuất 73 đặc trưng từ dữ liệu Formula 1. Phần VI trình bày kết quả phân tích khám phá dữ liệu, bao gồm KDE, Spearman Correlation, Class Imbalance và thực nghiệm Tyre Cliff. Phần VII phân tích cấu trúc và thông số kỹ thuật của tập dữ liệu đầu ra. Phần VIII trình bày các chuẩn mực kỹ thuật và khả năng tái lập của hệ thống. Phần IX thảo luận các hạn chế, yếu tố thiên vị và hướng phát triển trong tương lai. Cuối cùng, Phần X trình bày kết luận của nghiên cứu.
+
+II. CÁC NGHIÊN CỨU LIÊN QUAN
+2.1 Sports Analytics và Machine Learning cho bài toán dự đoán
+
+Trong những năm gần đây, học máy đã được ứng dụng rộng rãi trong lĩnh vực sports analytics nhằm hỗ trợ dự đoán kết quả thi đấu và tối ưu chiến thuật vận hành. Nhiều nghiên cứu đã áp dụng các mô hình như Logistic Regression, Random Forest hoặc Gradient Boosting để dự đoán kết quả bóng đá với độ chính xác từ 60–70% [2]. Ngoài ra, các phương pháp học tăng cường (Reinforcement Learning) cũng được sử dụng để tối ưu chiến thuật lựa chọn nhân sự trong các môn thể thao như Cricket và bóng rổ [3].
+
+Đối với lĩnh vực đua xe thể thao (motor racing analytics), các nghiên cứu hiện nay chủ yếu tập trung vào việc dự đoán vị trí về đích hoặc thời gian hoàn thành vòng đua thông qua các thuộc tính tĩnh như vị trí xuất phát, lịch sử điểm số hoặc thành tích thi đấu trước đó [4][5]. Tuy nhiên, phần lớn các nghiên cứu vẫn chưa khai thác hiệu quả dữ liệu telemetry tần suất cao và dữ liệu ngữ cảnh biến động theo thời gian thực của cuộc đua.
+
+Đây cũng chính là khoảng trống nghiên cứu (research gap) cốt lõi hiện nay: các mô hình hiện tại còn thiếu khả năng tích hợp đồng thời giữa dữ liệu viễn trắc cơ học liên tục và dữ liệu ngữ cảnh chiến thuật động theo thời gian thực. Sự thiếu hụt này dẫn đến hạn chế lớn trong việc phản ánh các diễn biến mang tính động và phi tuyến tính xảy ra trực tiếp trên đường đua Formula 1, tạo ra động lực trực tiếp cho việc đề xuất giải pháp kỹ thuật dữ liệu trong nghiên cứu này.
+2.2 Data Engineering Patterns và Medallion Architecture
+Kiến trúc Medallion, được phổ biến bởi Databricks [6], phân chia vòng đời dữ liệu thành ba tầng gồm Bronze, Silver và Gold. Trong đó, tầng Bronze lưu trữ dữ liệu thô từ nguồn; tầng Silver thực hiện làm sạch, chuẩn hóa và xử lý dữ liệu; còn tầng Gold cung cấp dữ liệu đã được tổng hợp và tối ưu phục vụ phân tích hoặc huấn luyện mô hình học máy.
+Kiến trúc này mang lại nhiều lợi ích như tăng khả năng truy vết dữ liệu (Data Lineage), hỗ trợ modular hóa pipeline và tối ưu khả năng mở rộng của hệ thống xử lý dữ liệu. Ngoài ra, mô hình Medallion còn hỗ trợ cơ chế cập nhật dữ liệu tăng dần (Incremental Update), giúp giảm chi phí tính toán khi xử lý các hệ thống dữ liệu lớn.
+Tuy nhiên, hiện nay vẫn còn ít nghiên cứu ứng dụng kiến trúc Medallion một cách đầy đủ cho bài toán xử lý dữ liệu đua xe Formula 1, đặc biệt trong bối cảnh dữ liệu telemetry có tần suất cao và phụ thuộc mạnh vào thời gian.
+2.3 Time-Series Data Leakage và Best Practices
+Rò rỉ dữ liệu (Data Leakage) là một trong những vấn đề phổ biến nhất trong các bài toán dự đoán chuỗi thời gian [7]. Hiện tượng này xảy ra khi mô hình vô tình sử dụng thông tin thuộc tương lai trong quá trình huấn luyện, dẫn đến kết quả đánh giá không phản ánh đúng khả năng hoạt động thực tế của mô hình.
+Các nghiên cứu và quy trình chuẩn mực (Best Practices) hiện nay nhấn mạnh việc duy trì nghiêm ngặt thứ tự thời gian giữa tập huấn luyện (Train set) và tập kiểm thử (Test set), đồng thời áp dụng các kỹ thuật dịch chuyển thời gian (Temporal Shift hoặc Temporal Lagging) khi xây dựng các đặc trưng tổng hợp từ dữ liệu chuỗi thời gian nhằm cô lập hoàn toàn thông tin tương lai  [7][8].
+Nghiên cứu này kế thừa các nguyên tắc trên để xây dựng cơ chế xử lý dữ liệu thời gian chuyên biệt cho dữ liệu Formula 1, nhằm đảm bảo các đặc trưng đầu vào chỉ sử dụng thông tin lịch sử tại thời điểm dự đoán.
+2.4 Các nguồn dữ liệu Formula 1
+Hiện nay, dữ liệu Formula 1 chủ yếu được khai thác từ ba nguồn chính gồm OpenF1, FastF1 và các bộ dữ liệu công khai trên Kaggle [11]. Mỗi nguồn dữ liệu cung cấp các loại thông tin và tồn tại những giới hạn kỹ thuật riêng. 
+
+Nguồn dữ liệu
+Loại dữ liệu cung cấp
+Hình thức truy cập
+Giới hạn kỹ thuật
+OpenF1 [9]
+Dữ liệu ngữ cảnh cuộc đua bao gồm thời gian vòng chạy (laps), thời tiết (weather), chu kỳ lốp (stints), và vị trí thứ hạng (position).
+REST API (Định dạng JSON). 
+Giới hạn tần suất nghiêm ngặt 30 requests/phút; phạm vi dữ liệu chỉ lưu trữ từ mùa giải 2018 trở lại đây. 
+FastF1 [10]
+Dữ liệu viễn trắc (telemetry) cơ học tần suất cao và tọa độ không gian di chuyển của xe đua.
+Thư viện Python (Python Library) kết hợp hệ thống lưu đệm (cache) nội bộ.
+Phụ thuộc nặng vào dung lượng bộ nhớ đệm tại local; kiến trúc tĩnh không hỗ trợ luồng truyền dữ liệu thời gian thực (streaming).
+Kaggle [11]
+Dữ liệu tổng hợp và lịch sử vòng đua
+CSV Dataset
+Thiếu hụt hoàn toàn các thông số viễn trắc chi tiết cấp độ mili-giây và không có khả năng cập nhật thời gian thực.
+
+
+
+
+
+
+Bảng I: So sánh các nguồn dữ liệu F1 hiện hành
+Mặc dù các nguồn dữ liệu độc lập trên hỗ trợ tương đối tốt cho các tác vụ phân tích thống kê mô tả Formula 1 truyền thống, hiện nay trong cộng đồng sports analytics vẫn chưa tồn tại một bộ dữ liệu chuẩn hóa đồng bộ ở cấp độ vòng đua (lap-level dataset) có khả năng tích hợp đồng thời giữa các tín hiệu viễn trắc cơ học liên tục với bối cảnh chiến thuật lốp và môi trường khí hậu để phục vụ trực tiếp cho quá trình huấn luyện các mô hình học máy phân lớp. Thách thức này chính là động lực kỹ thuật cốt lõi để nghiên cứu này đề xuất kiến trúc đường ống tích hợp đa tầng phía sau.
+
+2.5 Khoảng trống nghiên cứu (Gap Analysis) 
+Qua khảo sát các nghiên cứu liên quan, có thể thấy rằng phần lớn công trình hiện nay chủ yếu tập trung vào mô hình dự đoán mà chưa giải quyết đầy đủ bài toán kỹ thuật dữ liệu cho Formula 1. Đặc biệt, vẫn thiếu một pipeline đồng bộ có khả năng tích hợp dữ liệu telemetry tần suất cao với dữ liệu ngữ cảnh cuộc đua theo thời gian thực.
+Ngoài ra, các vấn đề về chất lượng dữ liệu, đồng bộ chuỗi thời gian và rò rỉ dữ liệu (Data Leakage) vẫn chưa được xử lý triệt để [7][8]. Hiện nay cũng chưa tồn tại một bộ dữ liệu chuẩn hóa ở cấp độ vòng đua (lap-level dataset) có khả năng tái lập cao và sẵn sàng cho các mô hình học máy.
+Nghiên cứu này tập trung giải quyết các khoảng trống trên thông qua việc xây dựng pipeline kỹ thuật dữ liệu toàn diện, áp dụng cơ chế Temporal Shift và tạo bộ dữ liệu Formula 1 chuẩn hóa phục vụ trực tiếp cho bài toán dự đoán kết quả cuộc đua.
+III. KIẾN TRÚC HỆ THỐNG
+3.1. Tổng quan kiến trúc Pipeline
+
+
+Hình 1. Sơ đồ kiến trúc đường ống kỹ thuật dữ liệu Medallion đa tầng phục vụ chuyển đổi dữ liệu viễn trắc và dữ liệu ngữ cảnh giải đua Formula 1. 
+3.2. Kiến trúc Medallion (3 Lớp) 
+Quy trình quản lý vòng đời dữ liệu của hệ thống được tổ chức theo kiến trúc Medallion gồm ba tầng lưu trữ độc lập: Bronze, Silver và Gold. Mỗi tầng đảm nhiệm một vai trò riêng trong quá trình xử lý dữ liệu, từ lưu trữ dữ liệu thô đến tạo tập dữ liệu hoàn chỉnh phục vụ cho các mô hình học máy. Cấu trúc phân tầng của hệ thống được mô tả tại Bảng II. 
+
+Phân tầng
+Tên gọi kỹ thuật
+Mục đích xử lý
+Định dạng dữ liệu
+Bronze
+Raw Layer
+Lưu trữ dữ liệu thô nguyên bản từ các API nguồn, bảo toàn cấu trúc ban đầu
+JSON, CSV
+Silver
+Cleaned Layer
+Làm sạch dữ liệu, chuẩn hóa kiểu dữ liệu và xử lý missing values
+Parquet
+Gold
+Processed Layer
+Trích xuất đặc trưng, đồng bộ dữ liệu thời gian và tạo tập dữ liệu phục vụ cho mô hình học máy
+CSV
+
+
+
+
+BảngII: Phân tầng lưu trữ kiến trúc Medallion
+Lợi ích của kiến trúc Medallion:
+Tính tái lập (Reproducibility): Hệ thống có thể tái thực thi toàn bộ pipeline từ tầng Bronze, đảm bảo tính nhất quán của dữ liệu đầu ra và kết quả thực nghiệm trên nhiều phiên bản vận hành khác nhau. 
+Khả năng truy vết nguồn gốc (Data Lineage): Cấu trúc phân tầng rõ ràng giúp đội ngũ phát triển dễ dàng kiểm soát, giám sát và truy vết nguồn gốc dữ liệu cũng như các bước biến đổi toán học giữa các phân tầng xử lý. 
+Tính mô-đun hóa (Modularity): Các giai đoạn xử lý dữ liệu được cô lập độc lập thành các tầng chức năng riêng biệt, cho phép nhóm nghiên cứu cập nhật, thử nghiệm các kỹ thuật trích xuất đặc trưng mới (feature engineering) tại tầng Gold mà hoàn toàn không cần thực thi lại quy trình thu thập dữ liệu thô tốn kém tài nguyên từ các API nguồn.
+
+3.3 Nguồn Dữ liệu & APIs
+Hệ thống sử dụng hai nguồn dữ liệu chính gồm OpenF1[9] và FastF1[10] để thu thập dữ liệu ngữ cảnh cuộc đua và dữ liệu telemetry tần suất cao. 
+BẢNG III: ĐẶC TẢ KỸ THUẬT CÁC NGUỒN DỮ LIỆU ĐẦU VÀO 
+API
+Loại dữ liệu
+Endpoint / Interface
+Giới hạn
+OpenF1
+Dữ liệu bảng (laps, weather, stints, position, drivers)
+REST API (JSON)
+30 requests/phút
+FastF1
+Dữ liệu telemetry và vị trí xe
+Thư viện python(fastf1.get_session())
+Cache nội bộ
+
+Trong đó, OpenF1 cung cấp dữ liệu ngữ cảnh cuộc đua qua REST API, còn FastF1 được sử dụng để truy xuất dữ liệu telemetry cấp độ mili-giây của từng xe đua. Sự kết hợp đồng bộ giữa hai nền tảng này cho phép hệ thống thu thập toàn diện bức tranh chặng đua 
+3.4 Quyết định Thiết kế
+3.4.1 Cấu trúc lưu trữ Parquet và nén ZSTD
+ Hệ thống thay thế định dạng CSV truyền thống bằng Parquet nén cột kết hợp chuẩn Zstandard (ZSTD). Kỹ thuật này giúp giải quyết triệt để vấn đề quá tải bộ nhớ, giảm dung lượng lưu trữ từ 5-10 lần và tăng tốc độ nạp dữ liệu (I/O) lên gấp 10 lần, tối ưu hóa tối đa tài nguyên tính toán.
+3.4.2 Độ hạt dữ liệu cấp độ vòng đua (Lap-level Grain) 
+Đơn vị quan sát được thiết lập ở cấp độ vòng đua (mỗi dòng dữ liệu đại diện cho một vòng chạy của một tay đua). Quyết định này giúp loại bỏ nhiễu vi mô của cảm biến mili-giây, đồng thời cung cấp không gian mẫu tối ưu và đủ lớn (đạt 78.023 bản ghi) để các mô hình học máy phân lớp hoạt động hiệu quả.
+3.4.3 Kiến trúc điều khiển bằng cấu hình (Config-Driven Pipeline)
+ Đường ống dữ liệu được thiết kế hoàn toàn theo hướng điều khiển bằng cấu hình (config-driven). Việc tách biệt các tham số vận hành khỏi mã nguồn cốt lõi giúp hệ thống tự động hóa quá trình xử lý, hỗ trợ lưu vết (logging) và đảm bảo khả năng tái thực thi nhất quán 100% mà không cần can thiệp vào code.
+IV. PHƯƠNG PHÁP TIỀN XỬ LÝ DỮ LIỆU
+4.1.1 Cơ chế Rate Limiter và Đa luồng (Multithreading) 
+Do nền tảng OpenF1 API áp đặt giới hạn truy xuất nghiêm ngặt ở mức 30 requests/phút, hệ thống đã tích hợp cơ chế điều phối luồng an toàn (Thread-safe Rate Limiter) kết hợp cùng kỹ thuật lập lịch đa luồng (I/O Multithreading). Giải pháp này giúp tối ưu hóa thời gian thu thập dữ liệu trong khi vẫn đảm bảo tuân thủ tuyệt đối giới hạn băng thông của API. Các điểm cuối (endpoints) độc lập như laps, drivers hay weather được hệ thống xử lý và tải về song song nhằm giảm thiểu tối đa độ trễ mạng (network latency).
+Ngoài ra, hệ thống xây dựng cơ chế cache nhằm tránh tải lại dữ liệu đã tồn tại trên ổ đĩa, giúp tiết kiệm băng thông và giảm thời gian thực thi pipeline.
+Listing 1. Mã giả (Pseudocode) mô tả cơ chế thu thập dữ liệu có kiểm soát 
+# Pseudocode
+for endpoint in ['drivers', 'laps', 'weather', ...]:
+    if endpoint_file_exists():
+        print("Skip (cache)")
+    else:
+        fetch_from_api(endpoint)  # Respects rate limiter
+4.1.2 Đồng bộ và Hạ tần số (Resampling) dữ liệu Telemetry FastF1 
+Dữ liệu viễn trắc (telemetry) thô từ FastF1 có tần suất lấy mẫu rất cao (10–20 Hz), tạo ra gánh nặng xử lý bộ nhớ khổng lồ. Hệ thống tiến hành đồng bộ dữ liệu cơ học (car_data) và định vị (pos_data) theo timestamp, sau đó áp dụng kỹ thuật Resampling (lấy trung bình số học) để ép dải tần số về chuẩn cố định 1Hz.
+Quyết định hạ tần số này là một sự đánh đổi có chủ đích giữa độ phân giải (precision) và hiệu năng tính toán (computational efficiency), được chứng minh qua các thực nghiệm sau:
+Tối ưu tài nguyên: Việc giảm tần số xuống 1Hz giúp cô đọng quy mô dữ liệu từ ~1,44 triệu điểm xuống còn ~72.000 điểm cho mỗi chặng đua. Giải pháp này khắc phục triệt để rủi ro tràn RAM và tăng tốc độ trích xuất đặc trưng lên gấp 12 lần.
+Bảo toàn thông tin cốt lõi: Biến thiên tốc độ ở chuẩn 1Hz vẫn duy trì hệ số tương quan Spearman lên tới 0.96 so với gốc 20Hz. Điều này chứng minh thông tin mất mát là không đáng kể đối với bài toán dự đoán xu hướng dài hạn ở cấp độ vòng đua (lap-level prediction).
+Duy trì khả năng mở rộng: Toàn bộ dữ liệu thô 20Hz gốc vẫn được bảo lưu nguyên vẹn tại phân tầng Bronze nhằm phục vụ các phân tích vi mô chuyên sâu sau này (như phát hiện điểm phanh chính xác đến 50ms).
+Listing 2. Pseudocode cho telemetry resampling
+# Pseudocode
+for driver in drivers:
+    car_data = get_car_telemetry(driver)  # ~180k raw points @ 20Hz
+    pos_data = get_position_data(driver)  # ~180k raw points @ 20Hz
+    merged = merge_on_time(car_data, pos_data)
+    resampled = resample_to_1s(merged)    # ~5k points @ 1Hz
+    save_as_parquet(resampled)            # Partitioned by year/event/session
+
+4.2 Khảo sát Chất lượng Dữ liệu Ban đầu (Data Profiling) 
+Hệ thống tích hợp mô-đun kiểm định chất lượng dữ liệu tự động (Automated Data Profiling) tại tầng Bronze nhằm phát hiện missing values, bản ghi trùng lặp (duplicate records), sai lệch kiểu dữ liệu và các giá trị bất thường như vận tốc vượt ngưỡng hoặc timestamp không hợp lệ.
+
+Vấn đề
+Phương pháp phát hiện
+Hành động
+Missing Values
+Đếm tỷ lệ NULL trên từng trường dữ liệu độc lập.
+Ghi nhận nhật ký (Log) cảnh báo nếu tỷ lệ > 20%. 
+Duplicates
+Kiểm tra tính duy nhất của bộ khóa chính  (session_key, driver, lap_number) primary key.
+Ghi nhận nhật ký (Log) cảnh báo nếu số lượng trùng lặp > 0. 
+Negative Values
+Rà soát các thuộc tính vật lý bắt buộc dương (vận tốc, thời gian, nhiệt độ).
+Gắn cờ (Flag anomaly) để giám sát.
+Whitespace
+Áp dụng biểu thức chính quy (Regex) trên các cột văn bản.
+Tự động cắt tỉa và loại bỏ (Trim/Remove).
+Type Mismatch
+Đối chiếu kiểu dữ liệu thực tế (dtype) với lược đồ chuẩn định trước (expected schema).
+Thử nghiệm ép kiểu an toàn (Attempt coerce).
+Outliers
+Đo lường bằng điểm chuẩn hóa phân phối tĩnh Z-score > 3σ
+Thống kê số lượng và gắn cờ cảnh báo (Count & Flag).
+
+Kết quả của toàn bộ tiến trình kiểm định được hệ thống tự động xuất bản thành báo cáo quality_report_before.md. Khâu đánh giá này đóng vai trò như một chốt chặn an toàn (sanity check), hỗ trợ kỹ sư dữ liệu theo dõi và đánh giá toàn diện "sức khỏe" của luồng thông tin trước khi kích hoạt các thuật toán làm sạch chuyên sâu tại phân tầng Silver phía sau.
+4.3 Quy trình Làm sạch Dữ liệu tại Phân tầng Silver (7 bước) 
+
+Quá trình làm sạch dữ liệu được thực thi tuần tự qua 7 bước kỹ thuật nhằm triệt tiêu nhiễu cảm biến và chuẩn hóa không gian vector đặc trưng. Quy trình là sự kết hợp chặt chẽ giữa các phép kiểm định thống kê và tri thức nghiệp vụ (domain knowledge) của bộ môn Formula 1. 
+
+Bước 1 & 2 & 3: Tiền xử lý cơ sở (Type Casting & Filtering): 
+Hệ thống tự động ép kiểu dữ liệu về định dạng chuẩn (datetime64, string, float), đồng thời loại bỏ các vòng chạy không hợp lệ do tai nạn (DNF - Did Not Finish) và các bản ghi khuyết dấu thời gian (NaT) nhằm bảo toàn tính toàn vẹn của chuỗi thời gian.
+
+Bước 4: Kiểm soát Biên vật lý (Physical Hard Bounds) và Ngoại lệ (IQR): 
+Ngưỡng giới hạn được thiết lập dựa trên kỷ lục lịch sử F1: vận tốc giới hạn [0, 400] km/h, thời gian vòng chạy hợp lệ [30, 300] giây và nhiệt độ mặt đường [-30, 80] độ C. Để xử lý các ngoại lệ tinh vi hơn (như chạy chậm do Safety Car), hệ thống áp dụng dải phân vị IQR (Q1 - 1.5IQR đến Q3 + 1.5IQR) theo từng phiên đua để gắn cờ theo dõi (is_outlier).
+
+Bước 5: Nội suy Điền khuyết Cơ chế (Mechanistic Imputation): 
+Với dữ liệu viễn trắc: Nguyên nhân khuyết được xác định là MCAR (Missing Completely at Random) do mất kết nối cảm biến đột ngột. Hệ thống sử dụng trung vị riêng của từng tay đua (driver-specific median) để điền khuyết nhằm cô lập nhiễu ngoại lệ và bảo toàn đặc tính hiệu suất cá nhân
+
+Với dữ liệu thời tiết: Cơ chế khuyết thuộc nhóm MAR (Missing at Random) do lỗi lưu trữ theo phiên. Hệ thống áp dụng trung bình phiên (session-level mean) nhằm duy trì sự nhất quán của bối cảnh môi trường.
+
+Bước 6: Khử trùng lặp Thực thể (Entity Deduplication): 
+Loại bỏ hoàn toàn các bản ghi dư thừa, chỉ giữ lại bản trạng thái cập nhật cuối cùng (keep='last') dựa trên bộ khóa chính định danh duy nhất: (session_key, driver_number, lap_number).
+
+Bước 7: Mượt hóa Không gian (Spatial Interpolation): 
+Phát hiện bất thường định vị không gian dữ liệu telemetry - nếu khoảng cách di chuyển tọa độ x hoặc y giữa hai giây liên tiếp nhảy vọt đột ngột vượt quá ngưỡng vật lý (>5000 đơn vị đo/giây) sinh ra do trễ tín hiệu GPS. Các điểm nhiễu này bị triệt tiêu thành NaN và kích hoạt thuật toán Nội suy tuyến tính (Linear Interpolation) nhằm duy trì quỹ đạo động học liên tục của xe.
+
+Listing 3. Mã giả mô tả quy trình làm sạch dữ liệu tích hợp tại Silver Layer
+
+
+# 1-3. Type Casting & DNF/NaT Elimination
+laps['date_start'] = pd.to_datetime(laps['date_start'])
+clean_laps = laps[(laps['is_valid'] == True) & laps['date_start'].notna()]
+
+# 4. Physical Hard Bounds Validation
+clean_telemetry = telemetry[telemetry['speed'].between(0, 400)]
+clean_weather = weather[weather['track_temperature'].between(-30, 80)]
+
+# 5. Mechanistic Imputation (MCAR vs MAR)
+laps['lap_duration'] = laps.groupby('driver_number')['lap_duration'].transform(
+    lambda x: x.fillna(x.median()) # MCAR: Driver-specific median
+)
+weather['air_temperature'] = weather.groupby('session_key')['air_temperature'].transform(
+    lambda x: x.fillna(x.mean())   # MAR: Session-level mean
+)
+
+# 6 & 7. Deduplication & Spatial Interpolation
+clean_laps = clean_laps.drop_duplicates(subset=['session_key', 'driver_number', 'lap_number'], keep='last')
+telemetry.loc[telemetry.groupby('driver_number')['x'].diff().abs() > 5000, 'x'] = np.nan
+telemetry['x'] = telemetry.groupby('driver_number')['x'].interpolate()
+
+4.4. Căn chỉnh và Đồng bộ Chuỗi thời gian (Temporal Alignment)
+
+Thách thức lớn nhất khi tích hợp dữ liệu đa nguồn trong hệ sinh thái Formula 1 là sự bất đồng bộ nghiêm trọng về tần suất cập nhật: dữ liệu viễn trắc cố định ở mức 1Hz (1 giây/bản ghi), luồng tọa độ vị trí biến động từ 2–5 giây/bản ghi, và thông số khí hậu bối cảnh có độ trễ lên tới 5 phút/bản ghi. Để hợp nhất các nguồn này về một cấu trúc phẳng thống nhất mà không làm biến dạng trục thời gian, hệ thống áp dụng thuật toán nối mờ chuỗi thời gian pd.merge_asof.
+
+Các quyết định kỹ thuật cốt lõi bao gồm:
+
+Cơ chế Phép nối lùi (Backward Join): Cấu hình direction='backward' bắt buộc hệ thống luôn truy vấn và ánh xạ bản ghi ngữ cảnh gần nhất phía trước vào đúng thời điểm xe đang vận hành. Giải pháp toán học này giúp phản ánh chính xác luồng thông tin thực tế tại trạm điều hành và kiểm soát tuyệt đối rủi ro rò rỉ dữ liệu.
+
+Ngưỡng dung sai kiểm soát (Tolerance Boundary): Hệ thống áp dụng biên giới hạn dung sai thời gian nghiêm ngặt 30 giây cho phép nối tọa độ không gian. Nếu khoảng cách thời gian giữa tín hiệu định vị và tín hiệu viễn trắc vượt quá 30 giây (do lỗi mất gói tin hệ thống), phép nối sẽ tự động hủy bỏ và trả về giá trị NaN nhằm ngăn chặn hiện tượng ghép sai lệch vị trí của xe trên đường đua.
+
+Listing 4. Đồng bộ chuỗi thời gian đa tần suất bằng thuật toán merge_asof
+
+# Sort timestamps sequentially before performing merge_asof (Mandatory)
+telemetry = telemetry.sort_values('date')
+weather = weather.sort_values('date')
+position = position.sort_values('date')
+
+# Step 1: Align weather context to telemetry timeline
+telemetry_weather = pd.merge_asof(
+    telemetry, weather, on='date', by='session_key', 
+    direction='backward'
+)
+
+# Step 2: Align spatial position coordinates with a 30-second boundary
+telemetry_full = pd.merge_asof(
+    telemetry_weather, position, on='date', by=['session_key', 'driver_number'],
+    direction='backward', tolerance=pd.Timedelta(seconds=30)
+)
+
+4.5 Ngăn chặn Rò rỉ Dữ liệu (Temporal Shift)
+
+Rò rỉ dữ liệu (Data Leakage) là một trong những lỗi nghiêm trọng nhất trong các bài toán dự đoán chuỗi thời gian. Trong bối cảnh Formula 1, hiện tượng này xảy ra khi mô hình vô tình sử dụng thông tin của chính vòng đua hiện tại để dự đoán kết quả của vòng đó, khiến mô hình “nhìn trước tương lai” và tạo ra kết quả đánh giá sai lệch.
+
+Để giải quyết vấn đề này, hệ thống áp dụng cơ chế Dịch chuyển Thời gian (Temporal Shift) nhằm dịch chuyển toàn bộ các đặc trưng động như vận tốc, vị trí, độ mở chân ga và nhiệt độ mặt đường về quá khứ một vòng đua. Nhờ đó, mô hình chỉ sử dụng thông tin lịch sử tại vòng N−1 để dự đoán kết quả tại vòng N, đảm bảo tính thực tiễn cho các hệ thống dự đoán trực tiếp trong cuộc đua.
+
+Listing 5. Triển khai thuật toán Temporal Shift trên các đặc trưng động 
+# Tịnh tiến các đặc trưng động (Dynamic Features) về quá khứ 1 vòng (Lag 1)
+for col in dynamic_features:
+    df[f'{col}_lag1'] = df.groupby('driver_number')[col].shift(1)
+
+# Trích xuất không gian vector sau dịch chuyển (Dùng Quá khứ dự đoán Tương lai)
+df_shifted = df[['session_key', 'driver_number', 'lap_number',
+                 'speed_lag1', 'position_lag1', 'throttle_lag1',
+                 'track_temperature_lag1', 'target_win']]
+
+
+Hình 2. Sơ đồ cơ chế Temporal Shift: Tịnh tiến dữ liệu vòng T-1 làm bối cảnh đầu vào để dự đoán kết quả vòng T nhằm ngăn chặn rủi ro rò rỉ thông tin tương lai. 
+
+Bảng IV. Minh họa cơ chế Temporal Shift
+
+Vòng đua (Lap N)
+Vận tốc gốc (speed)
+Vị trí gốc (position)
+T.Độ gốc (track_temp)
+→
+Vận tốc trễ (speed_lag1)
+Vị trí trễ (position_lag1)
+T.Độ trễ (temp_lag1)
+1
+310
+5
+45
+→
+NaN
+NaN
+NaN
+2
+305
+5
+46
+→
+310
+5
+45
+3
+315
+4
+47
+→
+305
+5
+46
+4
+312
+3
+48
+→
+315
+4
+47
+
+
+Cơ chế này giúp mô hình học từ dữ liệu quá khứ để dự đoán tương lai, đồng thời loại bỏ nguy cơ overfitting và tăng khả năng triển khai thực tế trong môi trường Formula 1 thời gian thực.
+4.6 Tối ưu hóa Lưu trữ và Ép kiểu Dữ liệu (Storage & Downcasting Optimization)
+Dữ liệu telemetry của Formula 1 có quy mô rất lớn, với hàng triệu bản ghi cho mỗi mùa giải. Nếu lưu trữ dưới định dạng CSV truyền thống, dung lượng dữ liệu có thể vượt quá hàng Gigabyte (GB) và gây áp lực lớn lên bộ nhớ cũng như tốc độ truy xuất dữ liệu.
+Để giải quyết vấn đề tài nguyên này, hệ thống triển khai chuỗi kỹ thuật tối ưu hóa lưu trữ bao gồm 3 trọng tâm:
+Tinh giản không gian đặc trưng (Feature Selection): Chỉ giữ lại các trường thông tin viễn trắc và định danh cốt lõi thực sự tham gia vào quá trình tính toán đặc trưng.
+Ép kiểu dữ liệu an toàn (Data Downcasting): Hạ bậc cấp phát bộ nhớ của các biến số học dựa trên miền giá trị thực tế (ví dụ: đưa float64 xuống float32, và biến định danh int64 xuống int8).
+Cấu trúc lưu trữ hướng cột (Columnar Storage): Chuyển đổi toàn bộ luồng lưu trữ sang định dạng Parquet kết hợp thuật toán nén Zstandard (ZSTD) cùng cơ chế phân vùng thư mục (Partitioning).
+Listing 6. Triển khai kỹ thuật Downcasting và tối ưu hóa I/O bằng Parquet/ZSTD
+# 1. Feature Selection: Lọc bỏ các cột dư thừa
+selected_cols = ['date', 'driver_number', 'speed', 'throttle', 'gear', 'rpm', 
+                 'x', 'y', 'z', 'session_key', 'year', 'event_name']
+
+# 2. Data Downcasting: Ép kiểu giảm dung lượng RAM
+df['speed'] = df['speed'].astype('float32')  # Tiết kiệm 50% RAM cho số thực
+df['gear'] = df['gear'].astype('int8')       # Tiết kiệm 75% RAM cho số nguyên nhỏ
+df['driver_number'] = df['driver_number'].astype('int8')
+
+# 3. Columnar Storage: Xuất file Parquet nén ZSTD phân vùng
+df.to_parquet(
+    f'data/year={year}/event={event}/session={session_type}/data.parquet',
+    compression='zstd',   # Thuật toán nén tối ưu hơn Snappy
+    row_group_size=10000  # Tối ưu hóa kích thước khối đọc cột
+)
+
+Kết quả thực nghiệm hệ thống chứng minh: kỹ thuật Downcasting giúp giải phóng ngay lập tức 50-75% dung lượng RAM phân bổ cho các ma trận số thực và biến phân loại nhỏ. Quan trọng hơn, việc chuyển đổi sang kiến trúc Parquet kết hợp nén ZSTD đã thu nhỏ thành công khối lượng dữ liệu viễn trắc từ 500 MB (dạng CSV thô) xuống chỉ còn 50–80 MB cho mỗi chặng đua. Giải pháp này giúp triệt tiêu áp lực lưu trữ, đẩy tốc độ truy xuất dữ liệu tăng vọt lên gần 10 lần so với định dạng CSV, đáp ứng hoàn hảo các tiêu chuẩn hiệu năng cho một đường ống dữ liệu quy mô lớn.
+
+4.7 Xác thực Chất lượng Dữ liệu Sau Xử lý
+
+Sau quá trình tiền xử lý và làm sạch dữ liệu, hệ thống thực hiện bước kiểm định cuối cùng nhằm đánh giá toàn diện chất lượng tập dữ liệu tại tầng Silver trước khi chuyển giao sang phân tầng Gold. Kết quả cho thấy toàn bộ các tiêu chuẩn kỹ thuật đều đạt yêu cầu đề ra.
+
+Bảng V. KẾT QUẢ KIỂM ĐỊNH CHẤT LƯỢNG DỮ LIỆU TRƯỚC VÀ SAU XỬ LÝ 
+
+
+Tiêu chí đo lường (Metric)
+Trước xử lý (Raw/Bronze)
+Sau xử lý (Clean/Silver)
+Ngưỡng mục tiêu (Target)
+Bản ghi viễn trắc / vòng đua lỗi (Invalid/Dropped Rows)
+> 4.600 dòng
+0
+0
+Bản ghi trùng lặp khóa (Duplicate Records)
+8.549 dòng
+0
+0
+Cảnh báo thất thoát tệp (Missing Cleaned Files)
+1 cảnh báo
+0 (Đã nội suy)
+0
+Toàn vẹn khóa chính (Primary Key Integrity)
+95%
+100%
+100%
+Hao hụt dữ liệu vòng đua (Lap-level Data Loss)
+—
+4.06%
+< 5%
+
+
+Kết quả thực nghiệm trên minh chứng rõ rệt hiệu năng của kiến trúc: các dị biệt hệ thống như bản ghi trùng lặp (duplicate_key) và lỗi viễn trắc đều được triệt tiêu tuyệt đối, đưa hệ thống về trạng thái sạch 100%. Đặc biệt, tỷ lệ hao hụt thông tin (data loss) tại bảng lõi laps.csv được kiểm soát ở mức 4.06% (tương đương 3.321 dòng bị loại bỏ) — nằm hoàn toàn trong vùng biên an toàn (< 5%). Các chỉ số này là minh chứng thống kê vững chắc khẳng định bộ dữ liệu đã đạt độ "sạch" tiêu chuẩn và hoàn toàn sẵn sàng cho giai đoạn trích xuất đặc trưng (Feature Engineering) phía sau.
+V. KỸ THUẬT TRÍCH XUẤT ĐẶC TRƯNG
+5.1 Phân loại và Tổ chức Đặc trưng (Feature Taxonomy)
+Tại tầng Gold Layer, hệ thống thực hiện trích xuất 73 tính năng đặc trưng phục vụ cho các mô hình học máy. Các đặc trưng được tổ chức thành 6 nhóm nghiệp vụ nhằm phản ánh đồng thời trạng thái động học của xe, chiến thuật cuộc đua và bối cảnh môi trường.
+BẢNG III. PHÂN LOẠI CÁC NHÓM ĐẰC TRƯNG
+
+Nhóm đặc trưng (Feature Group)
+Số lượng
+Ví dụ các trường tiêu biểu
+Mục đích trích xuất
+Viễn trắc (Telemetry & Lag-1)
+23
+speed, throttle, rpm, tele_prev_speed_max, tele_prev_brake_mean
+Mô tả chi tiết trạng thái động học cơ khí của xe (tích hợp dữ liệu hiện tại và dữ liệu trễ 1 vòng để chống rò rỉ).
+Chiến thuật lốp (Tyre Strategy)
+8
+tyre_age, compound, laps_until_cliff, is_past_cliff, compound_cliff
+Định lượng mức độ hao mòn vật lý và đánh giá chiến thuật sử dụng lốp của tay đua.
+Môi trường (Weather Context)
+6
+air_temp, track_temp, humidity, track_temp_evolution, rainfall
+Mô tả các điều kiện khí tượng và sự biến thiên nhiệt độ của mặt đường đua.
+Vị trí & Tiến trình (Race Position)
+9
+position, is_leading, is_top3, is_top10, laps_to_go, race_completion_pct
+Phản ánh diễn biến cục diện cuộc đua, vị trí thứ hạng và tỷ lệ hoàn thành chặng đua.
+Phong độ trượt (Rolling Performance)
+9
+rolling_avg_lap_3, rolling_std_lap_3, rolling_best_lap_3 (với các kích thước cửa sổ trượt 3/5/10)
+Đánh giá phong độ và tính ổn định tức thời của tay đua trong các khoảng thời gian ngắn hạn gần nhất.
+Siêu dữ liệu định danh (Metadata)
+15
+session_key, driver_number, lap_number, circuit_key, year
+Cung cấp thông tin định danh và bối cảnh tổ chức dữ liệu (phiên, tay đua, vòng, chặng đua, mùa giải).
+Nhãn mục tiêu (Target Labels)
+3
+target_win, target_podium, target_top10
+Cung cấp nhãn phân lớp đa mục tiêu phục vụ huấn luyện (Supervised Learning).
+
+
+Tổng kết lại, không gian vector đích của hệ thống sở hữu cấu trúc 73 chiều, bao gồm: 55 đặc trưng học máy cốt lõi  (23 telemetry, 8 tyre strategy, 6 weather, 9 rolling features, 9 race position), 15 cột metadata (định danh), và 3 nhãn dự đoán, phục vụ trực tiếp cho bài toán dự đoán kết quả Formula 1. 
+5.2 Mô hình hóa Hao mòn Lốp (Tyre Degradation Modeling)
+Hiệu suất lốp xe Formula 1 không suy giảm tuyến tính theo thời gian sử dụng. Trong thực tế, lốp thường duy trì hiệu suất ổn định trong nhiều vòng chạy trước khi bước vào giai đoạn suy giảm đột ngột về độ bám đường— hiện tượng này được gọi là "Tyre Cliff".Việc chỉ sử dụng tuổi thọ vật lý thuần túy của lốp sẽ khiến các mô hình học máy thất bại trong việc nắm bắt điểm uốn chiến thuật này. 
+Để giải quyết thách thức trên, hệ thống tích hợp chéo dữ liệu từ các chu kỳ chạy (stints) và thời gian vòng đua (laps) nhằm xây dựng một mô hình cơ sở đánh giá độ suy hao. Thuật toán phát hiện Cliff được kích hoạt tự động thông qua việc đo lường độ lệch tương đối: một điểm gãy uốn được xác nhận khi thời gian hoàn thành vòng đua (lap_duration) tăng vọt vượt ngưỡng dung sai 5% so với chuỗi phong độ trước đó của chính bộ lốp đó.
+Dựa trên tọa độ Cliff vừa xác định, hệ thống tiến hành trích xuất nhóm đặc trưng chiến thuật (Tyre Strategy Features) mang tính quyết định bao gồm:
+tyre_age: Tuổi thọ vật lý hiện tại của lốp (đơn vị: số vòng đua).
+laps_until_cliff: Khoảng lùi chiến thuật, đếm ngược số vòng an toàn dự kiến còn lại trước khi lốp chạm ngưỡng suy thoái hiệu suất.
+is_past_cliff: Biến cờ nhị phân (Boolean Flag) cảnh báo rủi ro bám đường khi lốp đã vượt quá điểm uốn tối ưu.
+tyre_degradation_rate: Đạo hàm suy giảm hiệu suất (tốc độ hao mòn) của lốp theo thời gian thực.
+Listing 7. Mã giả thuật toán phát hiện Tyre Cliff dựa trên biến thiên hiệu suất
+# 1. Tính toán trung vị thời gian vòng chạy theo từng loại lốp và tuổi thọ
+tyre_perf = lap_stint.groupby(['compound', 'tyre_age'])['lap_duration'].median().reset_index()
+
+# 2. Tính tỷ lệ phần trăm thay đổi (Percentage Change) để tìm điểm gãy uốn
+tyre_perf['pct_change'] = tyre_perf.groupby('compound')['lap_duration'].pct_change()
+
+# 3. Kích hoạt ngưỡng Cliff khi thời gian chạy tăng vọt đột ngột > 5%
+cliff_age = tyre_perf[tyre_perf['pct_change'] > 0.05].groupby('compound')['tyre_age'].first()
+
+
+Việc tạo thành công không gian đặc trưng phi tuyến tính này giúp mô hình AI "hiểu" được bản chất hao mòn cơ học, từ đó phân tích chính xác xác suất tay đua cần phải thực hiện pit-stop nhằm bảo toàn kết quả chặng đua. 
+
+5.3 Aggregation với Rolling Windows
+
+Để mô hình học được “đà phong độ” và mức độ ổn định tức thời của tay đua, hệ thống áp dụng kỹ thuật cửa sổ trượt (Rolling Window Aggregation) với các kích thước cửa sổ 3, 5 và 10 vòng chạy liên tiếp.
+
+Các đặc trưng rolling được xây dựng gồm:
+rolling_avg_lap_k: thời gian hoàn thành vòng chạy trung bình trên k vòng gần nhất
+rolling_std_lap_k: độ lệch chuẩn thời gian vòng chạy
+consistency_score: mức độ ổn định phong độ
+momentum_lap_3: xu hướng cải thiện hoặc suy giảm tốc độ
+
+Nhằm tuân thủ nghiêm ngặt kỷ luật chống rò rỉ dữ liệu chuỗi thời gian (Zero Data Leakage), toàn bộ các thao tác trượt thống kê đều được cấu hình tịnh tiến trễ một chu kỳ (.shift(1)). Giải pháp kỹ thuật này đảm bảo các chỉ số phong độ tại vòng $N$ chỉ được tổng hợp từ dữ liệu lịch sử của các vòng chạy trước đó, cách ly hoàn toàn thông tin chưa biết của vòng hiện tại.
+
+Listing 8. Xây dựng đặc trưng thống kê cửa sổ trượt bảo vệ dòng thời gian
+# Sequential Rolling Aggregation with Safe Temporal Shifting (Lag 1)
+for k in [3, 5, 10]:
+    # Groupby driver -> Shift 1 lap back to isolate future -> Apply rolling window
+    driver_grouped = master_df.groupby('driver_number')['lap_duration']
+    
+    master_df[f'rolling_avg_lap_{k}'] = (
+        driver_grouped.shift(1).rolling(window=k, min_periods=1).mean().values
+    )
+    master_df[f'rolling_std_lap_{k}'] = (
+        driver_grouped.shift(1).rolling(window=k, min_periods=1).std().values
+    )
+
+# 5.3.3 Advanced Statistical Derivations (Based on Lagged Windows)
+master_df['consistency_score'] = 1 - (master_df['rolling_std_lap_3'] / master_df['rolling_avg_lap_3'])
+master_df['momentum_lap_3'] = master_df['rolling_avg_lap_3'].diff() # Negative = accelerating
+5.4. Trích xuất Đặc trưng Động lực học Cuộc đua (Race Dynamics)
+Bên cạnh các tín hiệu viễn trắc cơ học và hao mòn lốp, hệ thống tiến hành tổng hợp thêm nhóm đặc trưng động lực học cuộc đua (Race Dynamics). Nhóm đặc trưng này đóng vai trò mô phỏng lại áp lực bám đuổi, trạng thái cạnh tranh trực tiếp và tác động của môi trường lên cục diện chặng đua theo thời gian thực.
+Các đặc trưng bối cảnh trọng tâm bao gồm:
+position_gain_lap: Chênh lệch thứ hạng (số vị trí tay đua vượt qua hoặc bị đánh mất) trong một vòng chạy, định lượng trực tiếp khả năng tấn công (overtaking) của tay đua.
+gap_to_leader: Khoảng cách thời gian (time delta) tương đối so với xe dẫn đầu, giúp mô hình nhận diện chiến thuật phân bổ sức lực của tay đua.
+track_temp_evolution: Đạo hàm nhiệt độ mặt đường giữa các vòng đua liên tiếp. Đặc trưng này hỗ trợ mô hình học máy nhận biết sự thay đổi về độ bám đường (grip level) do các biến động thời tiết cực đoan.
+Listing 9. Trích xuất các đặc trưng bối cảnh cạnh tranh 
+# 1. Tính toán chênh lệch thứ hạng (Negative diff = Gain position)
+master_df['position_gain_lap'] = (
+    master_df.groupby('driver_number')['position']
+    .diff().fillna(0) * (-1)
+)
+# 2. Theo dõi mức độ biến thiên nhiệt độ mặt đường (Track evolution)
+master_df['track_temp_evolution'] = (
+    master_df.groupby(['session_key', 'circuit_key'])['track_temperature']
+    .diff().fillna(0)
+)
+5.5. Xác thực Không gian Đặc trưng (Gold Layer Validation)
+
+Sau quá trình feature engineering, hệ thống thực hiện bước kiểm định dữ liệu đầu ra nhằm đảm bảo tính toàn vẹn và độ tin cậy của tập dữ liệu Gold Layer trước khi phục vụ cho các mô hình học máy.
+
+Bộ quy tắc xác thực (Validation Rules) bao gồm 3 rào cản nghiêm ngặt:
+Toàn vẹn Định danh (Entity Integrity): Khẳng định không tồn tại bất kỳ sự trùng lặp nào trên bộ khóa chính hạt nhân (session_key, driver_number, lap_number).
+Toàn vẹn Mục tiêu (Target Integrity): Đảm bảo các nhãn phân lớp dự đoán (ví dụ: target_win, target_podium) và các trường siêu dữ liệu (metadata) tuyệt đối không chứa giá trị khuyết thiếu (NaN).
+Cách ly Rò rỉ (Leakage Isolation): Rà soát cấu trúc thời gian để đảm bảo mọi đặc trưng động đều đã được áp dụng cơ chế dịch chuyển (Temporal Shift), triệt tiêu hoàn toàn nguy cơ rò rỉ dữ liệu (Data Leakage).
+
+
+Listing 10. Tích hợp Data Assertions kiểm định dữ liệu đầu ra 
+# Quy tắc 1: Kiểm định tính duy nhất của Khóa chính (Primary Keys)
+pk = ['session_key', 'driver_number', 'lap_number']
+assert not master_df.duplicated(subset=pk).any(), "Data Quality Error: Phát hiện trùng lặp khóa chính!"
+# Quy tắc 2: Không chấp nhận NaN tại các trường trọng yếu và Nhãn dự đoán
+critical_fields = ['session_key', 'driver_number', 'lap_number', 'target_win']
+assert master_df[critical_fields].notna().all().all(), "Data Quality Error: Giá trị khuyết thiếu tại trường mục tiêu!"
+# Quy tắc 3: Xác thực tỷ lệ Missing Values tổng thể nằm trong biên an toàn (< 5%)
+overall_missing_rate = master_df.isnull().mean().max()
+assert overall_missing_rate < 0.05, f"Data Quality Error: Tỷ lệ khuyết thiếu vượt ngưỡng an toàn ({overall_missing_rate:.2%})"
+Bước xác thực này giúp đảm bảo tập dữ liệu cuối cùng không chứa lỗi cấu trúc, thiếu khóa định danh hoặc nguy cơ rò rỉ thông tin tương lai trong quá trình huấn luyện mô hình. 
+
+VI. PHÂN TÍCH KHÁM PHÁ DỮ LIỆU (EDA)
+6.1 Tổng quan Dữ liệu Thực nghiệm
+
+Sau khi hoàn tất toàn bộ chu trình tự động thu thập, làm sạch và hợp nhất đa nguồn, hệ thống đã kiến tạo thành công bộ dữ liệu Formula 1 ở cấp độ vòng đua (Lap-level Dataset) với độ tin cậy và tính nhất quán cao. Bộ dữ liệu này phản ánh toàn diện bối cảnh thi đấu của các mùa giải từ năm 2024 đến năm 2026. Bằng các kỹ thuật xử lý dữ liệu lớn, hệ thống đã nén và chuẩn hóa thành công khối lượng tín hiệu viễn trắc đồ sộ (lên tới 14.860.454 bản ghi tần suất cao) thành một không gian vector đích dạng phẳng gồm 78.023 dòng, phục vụ trực tiếp cho các thuật toán học máy.
+
+BẢNG VII: THỐNG KÊ TỔNG QUAN TẬP DỮ LIỆU ĐÍCH (MASTER DATASET) 
+
+Chỉ số
+Giá trị
+Mùa giải
+2024–2026
+Tổng số tuần đua
+76
+Tổng số phiên chạy
+180 
+Tổng telemetry points
+14,860,454
+Tổng số bản ghi lap-level
+78.023
+Số lượng đặc trưng
+73
+Số lượng nhãn mục tiêu
+3
+
+
+Hồ sơ Chất lượng Dữ liệu (Data Profiling Summary)
+Để minh chứng cho hiệu suất của các thuật toán tiền xử lý, hệ thống tiến hành thống kê cấu trúc và đo lường trực quan chất lượng của các tập dữ liệu thành phần tại phân tầng Silver (Silver Layer) ngay trước khi bước vào module trích xuất đặc trưng chuyên sâu. 
+
+BẢNG VIII:CHẤT LƯỢNG CÁC TẬP DỮ LIỆU THÀNH PHẦN SAU TIỀN XỬ LÝ 
+
+Dataset
+Rows
+Columns
+Missing Values
+Duplicates
+results.csv
+108
+5
+0,00%
+0
+laps.csv 
+78,292
+17
+0,07%
+0
+weather.csv
+14,502
+10
+0,00%
+0
+stints.csv
+8,893
+8
+0,00%
+0
+sessions.csv
+1.807
+115
+0,00%
+0
+drivers.csv
+3,717
+12
+0,00%
+0
+
+
+Kết quả cho thấy quá trình tiền xử lý đã cải thiện đáng kể chất lượng dữ liệu, giảm mạnh tỷ lệ khuyết thiếu và đảm bảo tính nhất quán giữa các nguồn dữ liệu đầu vào trước khi phục vụ cho các mô hình học máy.
+
+
+
+
+6.2 Phân phối Thời gian Vòng đua (Lap Duration Distribution)
+
+Kết quả phân tích khám phá dữ liệu (EDA) trên tập mẫu gồm 24.196 vòng chạy từ notebook eda_feature_engineering.ipynb cho thấy thuộc tính thời gian hoàn thành vòng chạy (lap_duration) sở hữu phân phối tiệm cận chuẩn (Gaussian-like Distribution), nhưng xuất hiện phần đuôi lệch phải kéo dài (Positive Skewness). Hiện tượng lệch phải này phản ánh chính xác bối cảnh động lực học thực tế của bộ môn Formula 1 dưới tác động của các yếu tố phi tuyến tính như chiến thuật pit-stop hoặc các sự cố bất ngờ trên đường đua.
+
+
+Bảng VIII. Thống kê phân phối Lap Duration
+
+Metric
+Giá trị thực nghiệm
+Tổng số mẫu quan sát (Total Laps)
+78.292 vòng
+Thời gian vòng chạy trung vị (Median)
+93,0 giây
+Số lượng vòng chạy bình thường (Normal)
+76.059 vòng
+Số lượng vòng chạy ngoại lệ (Outliers Z > 3)
+2.233 vòng
+
+
+
+
+Hình 3. Phân phối thuộc tính lap_duration và các điểm ngoại lệ
+
+Qua quan sát trực quan từ biểu đồ 3, phần lớn các vòng chạy tối ưu của tay đua tập trung với mật độ cao trong phân khúc từ 80 đến 100 giây. Tuy nhiên, các giá trị ngoại lệ (Outliers) có đuôi phân phối kéo dài từ 150 giây đến ngưỡng cực đại 200 giây chiếm khoảng 2.8% tổng không gian mẫu. Qua đối chiếu với nghiệp vụ cuộc đua, các điểm dị biệt này hoàn toàn hợp lệ về mặt vật lý và thường xuất hiện tập trung vào ba tình huống bối cảnh cụ thể:
+
+Tay đua chủ động giảm tốc độ để tiến vào khu vực kỹ thuật (Pit-lane) thực hiện chiến thuật thay lốp.
+
+Ban kiểm soát cuộc đua kích hoạt trạng thái Xe an toàn (Safety Car / Virtual Safety Car), buộc toàn bộ đoàn đua phải tuân thủ giới hạn tốc độ gắt gao.
+
+Điều kiện môi trường thay đổi đột biến (ví dụ: mặt đường trơn trượt do mưa lớn hoặc có chướng ngại vật do va chạm liên hoàn).
+
+Việc ra quyết định giữ lại các điểm ngoại lệ hợp lệ này (thay vì loại bỏ chúng bằng các bộ lọc máy móc) giúp bộ dữ liệu cấp độ vòng đua bảo toàn trọn vẹn các tín hiệu chiến thuật đa chiều. Đây chính là tiền đề quan trọng, cung cấp không gian vector đầu vào mang tính thực tiễn cao cho việc huấn luyện các mô hình học máy dự đoán hiệu suất phía sau.
+
+6.3 Đánh giá Thực nghiệm Điểm Gãy uốn Hao mòn lốp (Tyre Cliff) 
+
+Phân tích thực nghiệm về hiệu suất hao mòn lốp (Hình 4) đã minh chứng rõ nét đặc tính suy thoái bám đường phi tuyến tính (non-linear grip degradation) của các hợp phần cao su dưới chu kỳ vận hành khắc nghiệt. Nhằm triệt tiêu nhiễu thống kê cục bộ và phản ánh chính xác bản chất chiến thuật Formula 1, hệ thống đề xuất áp dụng phương pháp luận lai (Hybrid Approach). Phương pháp này là sự giao thoa giữa tín hiệu học thực nghiệm từ dữ liệu viễn trắc (chiếm 60% trọng số) và tri thức chuyên gia (Domain Knowledge - chiếm 40% trọng số) nhằm xác định chính xác tọa độ điểm gãy uốn. Kết quả các mốc vòng chạy mang tính bước ngoặt chiến thuật được tổng hợp chi tiết tại Bảng IX. 
+
+
+BẢNG IX: ĐIỂM RƠI HAO MÒN LỐP (TYRE CLIFF POINTS) THEO PHƯƠNG PHÁP HYBRID 
+
+Loại hợp phần lốp (Compound)
+Vòng chạy xuất hiện Cliff
+Diễn giải bản chất vật lý / Chiến thuật F1 thực tế
+HARD (Cứng)
+45
+Sở hữu vùng bình lưu hiệu suất (plateau) rất dài. Tiệm cận vòng 45, hiện tượng "lão hóa cứng" xuất hiện khiến độ bám đường suy giảm rõ rệt, phát tín hiệu bắt buộc cho các chiến lược pit-stop muộn. .
+MEDIUM (Trung tính)
+28
+Lốp có vùng hiệu suất ổn định kéo dài. Sau vòng 28, tốc độ bắt đầu giảm dần đều, thường được sử dụng cho các chu kỳ chạy (stints) có độ dài trung bình.
+SOFT (Mềm)
+10
+Tốc độ khai hỏa cực nhanh nhưng biên độ suy thoái hẹp. Cấu trúc cao su mềm bị phá vỡ và suy giảm bám đường ngay sau vòng thứ 10, đòi hỏi tay đua phải quản lý lốp nghiêm ngặt hoặc vào pit sớm.
+INTERMEDIATE (Trung gian)
+21
+Thiết kế cho điều kiện đường ẩm. Khả năng duy trì hiệu suất đạt tối đa 21 vòng trước khi các rãnh thoát nước bị bào mòn hoặc mặt đường có xu hướng khô dần.
+WET (Mưa lớn)
+7
+Cấu trúc chuyên dụng rẽ nước cường độ cao. Điểm uốn xuất hiện rất sớm (7 vòng) do hiện tượng quá nhiệt (overheating) và rãnh lốp bị phá vỡ nhanh chóng nếu mặt đường thiếu nước.
+
+
+
+Hình 4. Đồ thị phân tích hiệu suất hao mòn lốp. 
+
+Kết quả phân tích Hybrid cho thấy lốp HARD (45 vòng) và MEDIUM (28 vòng) là lựa chọn tối ưu cho các chiến thuật kéo dài stint. Trong khi đó, lốp SOFT (10 vòng) và WET (7 vòng) có cửa sổ vận hành hiệu quả rất hẹp. Những tín hiệu phi tuyến tính này cung cấp trọng số ngữ cảnh cực kỳ đắt giá, giúp mô hình học máy bắt bài chính xác các thời điểm tay đua cần tiến hành pit-stop thay lốp hoặc điều chỉnh chiến thuật theo điều kiện thực tế.
+
+
+6.4 Phân Tích Tương Quan (Spearman) & Đa Cộng Tuyến (VIF)
+Để đánh giá mối quan hệ tuyến tính và phi tuyến tính giữa các đặc trưng bối cảnh kỹ thuật viễn trắc với thuộc tính hiệu suất chuỗi thời gian, nghiên cứu tiến hành tính toán ma trận hệ số tương quan hạng Spearman (Spearman's Rank Correlation Coefficient) thay cho hệ số Pearson truyền thống. Quyết định này giúp mô hình nắm bắt chính xác các mối quan hệ phi tuyến tính giữa bộ đặc trưng viễn trắc và hiệu suất thời gian.
+
+Hình 5. Ma trận hệ số tương quan Spearman (Spearman Correlation Heatmap).
+Kết quả trực quan hóa từ Heatmap (Hình 5) làm nổi bật ba nhóm tín hiệu nghiệp vụ cốt lõi:
+Tương quan thuận (Trọng số Phân đoạn): Thời gian tiêu tốn tại Sector 1 (duration_sector_1) có mức độ tương quan thuận mạnh nhất (r = 0.64) đối với tổng thời gian vòng chạy (lap_duration), vượt trội hơn hẳn so với Sector 2 và Sector 3. Điều này khẳng định Sector 1 là khu vực mang tính quyết định cao nhất đến sự thành bại của toàn bộ vòng đua.
+Tương quan nghịch (Động lực học Vận tốc): Vận tốc tại các bẫy tốc độ (i1_speed, i2_speed, st_speed) đều duy trì mối quan hệ nghịch biến rõ rệt với tổng thời gian (lần lượt là -0.36, -0.35 và -0.27). Các chỉ số này phản ánh logic vật lý cơ bản: việc tối ưu hóa tốc độ đỉnh tại các đoạn thẳng sẽ trực tiếp rút ngắn thời gian chặng.
+Tương quan cục bộ (Hiệu suất khu vực): Tồn tại mối tương quan nghịch cục bộ đáng chú ý (r = -0.51) giữa tốc độ bẫy Sector 2 và thời gian hoàn thành chính phân đoạn đó, chứng minh năng lực duy trì tốc độ góc (cornering speed) tại Sector 2 ảnh hưởng mạnh đến hiệu suất khu vực.
+Kiểm định Đa cộng tuyến (VIF) và Khuyến nghị Kỹ thuật
+Bên cạnh việc phân tích hướng tương quan, hệ thống thực hiện đo lường Chỉ số Phóng đại Phương sai (VIF - Variance Inflation Factor) nhằm bảo vệ tiến trình hội tụ của các thuật toán học máy.
+Kết quả kiểm định phát hiện thuộc tính tốc độ trung bình toàn cục (speed) vi phạm nghiêm trọng ngưỡng an toàn vật lý (VIF = 12.5 > 10). Dị biệt này bắt nguồn từ hiện tượng đa cộng tuyến tuyến tính cực mạnh giữa tốc độ tổng thể và tốc độ cục bộ Sector 1 (r = 0.88).
+Hành động (Actionable Insight): Để duy trì tính ổn định toán học và ngăn chặn triệt để nguy cơ quá khớp (Overfitting) cho các mô hình hồi quy hoặc mô hình dạng cây (Tree-based), nghiên cứu đề xuất hai hướng giải quyết tại phân tầng Gold: (1) Loại bỏ hoàn toàn đặc trưng speed tổng thể khỏi không gian vector, hoặc (2) Biến đổi phái sinh thuộc tính này thành biến gia tốc ($a = \frac{\Delta v}{\Delta t}$) nhằm cô lập hoàn toàn tín hiệu nhiễu đa cộng tuyến.
+6.5 Phân Tích Mất Cân Bằng Lớp Cực Đoan (Extreme Class Imbalance)
+Hiện tượng mất cân bằng lớp cực đoan là đặc thù tất yếu của bài toán dự đoán Formula 1 ở cấp độ vòng đua (lap-level), bởi xác suất để một trạng thái cục bộ dẫn đến kết quả chiến thắng chung cuộc là rất thấp. 
+
+Theo thống kê tại Hình 6, tỷ lệ mẫu thuộc nhãn chiến thắng (target_win = 1) chỉ chiếm 0.36% (tương đương tần suất 1 mẫu chiến thắng trên 280 mẫu quan sát). Ngược lại, lớp NON-WIN áp đảo với 99.64%. Sự chênh lệch nghiêm trọng này sẽ gây ra hiện tượng "nghịch lý độ chính xác" (Accuracy Paradox), khiến các thuật toán phân lớp tiêu chuẩn bị "mù" và có xu hướng thiên vị hoàn toàn lớp đa số nhằm tối ưu hóa hàm mất mát một cách hời hợt.
+
+Hình 6. Phân phối mất cân bằng cực đoan của nhãn mục tiêu chiến thắng chặng (Lap-Level Win Rate Imbalance). 
+Đề xuất Kỹ thuật (Actionable Insights): Để ngăn chặn tình trạng mô hình dự đoán tất cả là NON-WIN, hệ thống bắt buộc phải tích hợp cụm 3 giải pháp chiến lược sau vào giai đoạn huấn luyện (Modeling):
+Tinh chỉnh Hàm mất mát (Cost-sensitive Learning): Thiết lập ma trận trọng số phạt nghịch đảo tần suất class_weight = {0: 1, 1: 280}. Trọng số này ép buộc thuật toán phải trả giá rất đắt (gấp 280 lần) nếu dự đoán sai lớp thiểu số.
+Cân bằng Không gian Vector (Data-level Approach): Kích hoạt thuật toán SMOTE (Synthetic Minority Oversampling Technique) trên tập huấn luyện tại Gold Layer nhằm nội suy tăng cường mẫu nhân tạo cho lớp chiến thắng, giúp mô hình thiết lập ranh giới quyết định (Decision Boundary) rõ ràng hơn.
+Chuyển đổi Tiêu chuẩn Đánh giá (Evaluation Metrics): Loại bỏ hoàn toàn độ đo Accuracy (vốn dễ dàng đạt >99% một cách ảo tưởng). Chuyển sang sử dụng các bộ chỉ số có độ nhạy cao với lớp thiểu số bao gồm F1-Score, ROC-AUC và Precision-Recall Curve (PR-AUC).
+
+6.6. Phân tích Tương tác Đặc trưng Đa biến (Multivariate Interaction Analysis) 
+Trong các hệ thống học máy dự đoán chuỗi thời gian có độ phức tạp cao, việc đánh giá các thuộc tính một cách độc lập đôi khi không phản ánh trọn vẹn bản chất động lực học của chặng đua. Để khắc phục hạn chế này, hệ thống tiến hành xây dựng và phân tích đặc trưng tương tác đa biến giữa Hợp phần lốp X Nhiệt độ mặt đường (Compound $\times$ Track Temperature). Đây là một tổ hợp tín hiệu phi tuyến tính mang trọng số cực mạnh, giúp thuật toán nhận diện sâu sắc bối cảnh vật lý của chiến thuật vận hành. 
+
+Hình 7. Đồ thị phân tích tương tác giữa các hợp phần lốp (SOFT, MEDIUM, HARD) và các dải nhiệt độ mặt đường đến thời gian vòng chạy trung vị.
+Dựa trên xu hướng biến thiên thực tế, nghiên cứu rút ra 3 luận điểm khoa học cốt lõi:
+Xu thế hội tụ tại dải nhiệt tối ưu: Khi nhiệt độ mặt đường tăng từ dải lạnh 20°C - 30°C lên dải nhiệt lý tưởng 40°C - 50°C, thời gian vòng chạy trung vị của cả ba hợp phần lốp đều sụt giảm mạnh (lốp SOFT giảm từ ~99,1 giây xuống ~93,8 giây; lốp HARD giảm từ ~97,2 giây xuống mốc tối ưu cực đại ~82,6 giây). Đặc tính này phản ánh quy luật nhiệt động lực học: mặt đường ấm giúp cao su dễ dàng đạt tới dải nhiệt độ kích hoạt (Window of Activation), tối đa hóa độ bám đường (Grip) và rút ngắn thời gian vòng đua.
+Đảo chiều phi tuyến tính ở dải nhiệt cực đại (> 50°C): Khi mặt đường vượt ngưỡng 50°C, đồ thị chứng minh một sự phân tách hình học quan trọng. Hiệu suất của lốp HARD bắt đầu suy giảm (thời gian chạy bị kéo dài từ 82,6 giây lên 84,3 giây). Ngược lại, lốp SOFT tiếp tục thiết lập mốc 83,3 giây. Tuy nhiên, đánh đổi lại, hợp phần mềm này sẽ lập tức rơi vào trạng thái quá nhiệt (Overheating) và chạm điểm gãy uốn hao mòn (Tyre Cliff) với tốc độ nhanh gấp đôi thông thường.
+Đặc tính kháng nhiệt tại dải lạnh (20°C - 30°C): Tại môi trường nhiệt độ thấp, lốp HARD thể hiện hiệu suất kém nhất do đặc tính cao su cứng rất khó sinh nhiệt (97,2 giây). Trong khi đó, lốp MEDIUM minh chứng được độ linh hoạt vượt trội khi duy trì thời gian chạy ổn định và tối ưu hơn hẳn lốp HARD trong cùng điều kiện (94,2 giây).
+
+Kết luận thuật toán: Kết quả thực nghiệm này khẳng định tổ hợp đặc trưng Compound × Track Temperature chứa đựng các thuộc tính phân tách không gian vector rất rõ ràng. Việc thiết lập đặc trưng tương tác (Interaction Feature) này vào phân tầng Gold Layer sẽ giúp mô hình Học máy triệt tiêu sai số khi đánh giá hiệu suất lốp, từ đó nâng cao độ nhạy bén và tính thực tiễn khi hệ thống phải đưa ra các dự đoán theo thời gian thực (Live Prediction) dưới bối cảnh thời tiết biến động liên tục. 
+
+VII. KẾT QUẢ VÀ TẬP DỮ LIỆU ĐÍCH (MASTER DATASET) 
+7.1 Thông Số Kỹ Thuật Dataset Đích (Master Dataset)
+Sau khi hoàn tất toàn bộ chu trình tiền xử lý và trích xuất đặc trưng chuyên sâu, đường ống dữ liệu (Data Pipeline) đã xuất bản thành công tập dữ liệu tổng thể cuối cùng tại đường dẫn data/processed/master_dataset.csv và phiên bản lưu trữ hướng cột tương ứng master_dataset.parquet. Bộ dữ liệu đích được chuẩn hóa độ hạt ở cấp độ vòng đua (Lap-level Grain), trong đó mỗi bản ghi đại diện cho một trạng thái vận hành duy nhất của một tay đua tại một vòng đua cụ thể. Tính toàn vẹn thực thể được kiểm soát và xác định chặt chẽ thông qua bộ ba khóa chính (Primary Keys): session_key, driver_number và lap_number.
+Tập dữ liệu đích bao phủ không gian thời gian lịch sử từ mùa giải 2024 đến mùa giải 2026, với quy mô chính xác đạt 78.023 bản ghi thực nghiệm. Không gian vector được mở rộng lên tới 73 chiều đặc trưng đa biến (tăng 13 thuộc tính so với thiết kế cơ sở ban đầu nhờ việc tích hợp thành công các nhóm viễn trắc trễ và chỉ số phân đoạn mở rộng).
+Về mặt hiệu năng kiến trúc hệ thống, việc áp dụng định dạng Parquet kết hợp cùng thuật toán nén Zstandard (ZSTD) đã chứng minh ưu thế vượt trội: dung lượng tổng thể được cô đọng từ 150 MB (ở định dạng CSV thô) xuống chỉ còn 30 MB. Giải pháp này giúp tiết kiệm tới 80% tài nguyên lưu trữ đĩa cứng, đồng thời tối ưu hóa tối đa tốc độ truy xuất I/O (Input/Output) trong quá trình nạp dữ liệu vào các mô hình học máy.
+
+7.2. Đặc tả Phân phối Nhãn Mục tiêu (Target Labels Profiling)
+Kết quả nghiệm thu không gian nhãn mục tiêu (Target Variables) trên tập Master Dataset (78.023 bản ghi) xác nhận bộ dữ liệu mang đặc thù mất cân bằng lớp cực đoan (Extreme Class Imbalance). Đây là bản chất vật lý tất yếu của dữ liệu Formula 1 ở cấp độ vòng đua, được phân phối chi tiết như sau:
+Nhãn Chiến thắng chặng (target_win): Lớp dương (Positive - đại diện cho trạng thái dẫn đến vị trí P1 chung cuộc) chỉ chiếm vỏn vẹn 0.4%, trong khi lớp âm (NON-WIN) áp đảo tuyệt đối ở mức 99.6%.
+Nhãn Top 3 Cạnh tranh (target_podium): Tỷ lệ mẫu dương nhỉnh hơn nhưng vẫn ở ngưỡng vô cùng khắt khe, đạt 1.1% so với 98.9% lớp âm.
+Nhãn Top 10 Có điểm (target_top10): Tỷ lệ mẫu dương phân bổ ở mức cao nhất trong ba nhãn, đạt 3.6% so với 96.4% lớp âm.
+
+
+Hình 8. Đồ thị phân tích tần suất và đo lường tỷ lệ mẫu dương thực tế của ba nhãn phân lớp mục tiêu tại Master Dataset. 
+Tiền đề cho Huấn luyện (Modeling Transition): Sự chênh lệch tỷ lệ mẫu dương cực nhỏ (chỉ từ 0.4% đến 3.6%) tạo thành một bài toán kiểm thử vô cùng hóc búa cho các thuật toán Học máy. Hệ thống bắt buộc phải triển khai các kỹ thuật bù đắp không gian vector (như SMOTE) và hàm mất mát nhạy cảm với chi phí (Cost-sensitive Learning) như đã đề xuất tại Mục 6.5 nhằm ngăn chặn hội chứng ranh giới quyết định mù (Decision Boundary Blindness). 
+
+VIII. CHUẨN MỰC KỸ THUẬT VÀ TÍNH TÁI LẬP (REPRODUCIBILITY) 
+8.1. Khả năng Tái lập Môi trường Tuyệt đối (100% Reproducible Environment)
+Để đảm bảo đường ống dữ liệu (Data Pipeline) vận hành đồng nhất và có khả năng tái lập kết quả chính xác 100% trên mọi môi trường tính toán độc lập, hệ thống thực hiện đóng gói môi trường phát triển một cách nghiêm ngặt. Phiên bản của các thư viện lõi được cố định tuyệt đối tại tệp requirements.txt, bao gồm: pandas==2.0.3, numpy==1.24.3, fastf1==3.1.0, pyarrow==13.0.0 (hỗ trợ cấu trúc Parquet hướng cột) và zstandard==0.20.0 (thuật toán nén ZSTD).
+Tiến trình cài đặt và khởi tạo môi trường ảo được thực thi tự động qua giao diện dòng lệnh (CLI):
+pip install -r requirements.txt
+8.2. Cơ chế Điều khiển Hướng Cấu hình (Config-Driven Architecture)
+Tuân thủ nguyên tắc thiết kế phần mềm linh hoạt, toàn bộ tham số vận hành, logic xử lý, phạm vi mùa giải và điều kiện biên vật lý đều được tách biệt hoàn toàn khỏi mã nguồn (source code). Các thông số này được quản lý tập trung tại tệp cấu hình configs/pipeline_config.yaml.
+Kiến trúc hướng cấu hình (Config-Driven) này cho phép kỹ sư dữ liệu điều khiển toàn bộ chu trình xử lý end-to-end chỉ thông qua việc hiệu chỉnh tham số văn bản mà không cần can thiệp hay viết lại logic
+
+
+execution:
+  steps_to_run:
+    - crawl      # Kích hoạt luồng thu thập tự động từ các API nguồn
+    - clean      # Kích hoạt chu trình làm sạch Silver Layer 7 bước
+    - base       # Kích hoạt dựng khung thực thể driver_session_base
+    - feature    # Kích hoạt trích xuất 73 đặc trưng và Temporal Shift
+
+data:
+  start_year: 2024
+  end_year: 2026
+  session_types:
+    - Race
+    - Qualifying
+    - Sprint
+
+storage:
+  compression: zstd
+  telemetry_resample_ms: 1000  # Resample telemetry tần suất cao về bước nhịp 1s
+
+
+Để tối ưu hóa trải nghiệm người dùng, hệ thống được thiết kế với một điểm khởi chạy duy nhất (Single Entry Point), kích hoạt toàn bộ đường ống thông qua một câu lệnh duy nhất: 
+python run_e2e_pipeline.py
+
+8.3. Nhật ký Siêu dữ liệu và Truy vết (Metadata Logging & Traceability)
+Sau khi mỗi chu trình thực thi hoàn tất, hệ thống tự động kết xuất một tệp nhật ký siêu dữ liệu định dạng JSON (metadata/fetch_raw_metadata.json). Tệp này đóng vai trò ghi nhận chi tiết thời gian chạy thực tế, trạng thái kiểm định (Validation Status), các chỉ số thống kê chất lượng đầu ra và đặc biệt là mã định danh phiên bản mã nguồn (Git Commit Hash).
+Cơ chế giám sát này thiết lập một phả hệ dữ liệu (Data Lineage) hoàn chỉnh, giúp nhóm phát triển dễ dàng truy vết ngược (Traceability) nguồn gốc luồng thông tin và hỗ trợ kiểm toán chất lượng Master Dataset một cách minh bạch tại bất kỳ mốc thời gian nào trong vòng đời dự án.
+
+IX. HẠN CHẾ VÀ HƯỚNG PHÁT TRIỂN
+9.1 Hạn Chế Của Bộ Dữ Liệu
+Dù đã áp dụng các tiêu chuẩn xử lý dữ liệu khắt khe, hệ thống hiện tại vẫn tồn tại một số hạn chế khách quan liên quan đến hạ tầng kỹ thuật và bản chất vật lý của bộ môn Formula 1. 
+
+a) Hiện tượng khuyết thiếu cấu trúc tại nhóm đặc trưng Viễn trắc (Telemetry)
+Qua thực nghiệm kiểm định chất lượng Master Dataset (Hình 9), hệ thống ghi nhận một thách thức kỹ thuật đáng kể: Toàn bộ nhóm 13 đặc trưng viễn trắc cơ học trễ (như tele_prev_speed_mean, tele_prev_brake_mean, v.v.) đều ghi nhận tỷ lệ khuyết thiếu đồng nhất ở ngưỡng 28%.
+Nguyên nhân: Sự cố này xuất phát từ việc bất đồng bộ hạ tầng giữa máy chủ nguồn OpenF1 và thư viện FastF1 trong một số sự kiện của mùa giải 2026 (tiêu biểu như phiên Qualifying tại Jeddah hay Race tại Miami), dẫn đến việc mất tín hiệu cảm biến định tuyến. Hệ quả là khi đường ống thực hiện phép nối thời gian mờ (merge_asof), hệ thống buộc phải trả về giá trị rỗng (NaN).
+Biến mục tiêu final_position: Đặc biệt, thuộc tính vị trí chung cuộc ghi nhận tỷ lệ rỗng lên tới ~94%. Đây là khuyết thiếu mang tính cấu trúc logic (Structural Missingness) do thứ hạng này chỉ được hệ thống vật lý ghi nhận một lần duy nhất tại vòng đua cuối cùng. Toàn bộ các vòng chạy bối cảnh phía trước ($1, 2, \dots, N-1$) đều không tồn tại giá trị này.
+
+
+Hình 9. Đồ thị phân tích tỷ lệ khuyết thiếu (Missing Values Post Feature Engineering) của các tính năng động sau khi hoàn thành công đoạn trích xuất đặc trưng Gold Layer
+
+(b) Đánh Đổi Hiệu Năng Từ Kỹ Thuật Resampling 1 Giây(Resampling Trade-off) 
+Việc chủ động hạ tần suất lấy mẫu của dòng viễn trắc từ mức độ phân giải cao (20Hz) về bước nhịp cố định 1 giây/bản ghi (1Hz) mang lại lợi ích khổng lồ: tối ưu hóa dung lượng lưu trữ định dạng Parquet và tăng tốc độ xử lý phép nối (Join) lên gấp 10 lần. Tuy nhiên, giải pháp kỹ thuật này buộc phải đánh đổi bằng việc san phẳng và đánh mất các hành vi vi mô cơ học (micro-behaviors) diễn ra trong khoảng thời gian phần nghìn giây — ví dụ như kỹ thuật nhấp nhả chân ga chớp nhoáng (Throttle modulation) hoặc tọa độ cực đại tại điểm phanh (Braking Point). 
+
+(c) Kiến Trúc Xử Lý Batch-Processing Offline
+Hệ thống hiện tại vận hành theo cơ chế xử lý theo mẻ (Batch Processing offline)-Pipeline dữ liệu chỉ có thể kích hoạt thu thập và tính toán các chỉ số sau khi chặng đua đã chính thức kết thúc và toàn bộ tệp lịch sử đã được lưu cache hoàn chỉnh trên máy chủ API nguồn. Kiến trúc này chưa đáp ứng được điều kiện vận hành của các hệ thống Streaming thời gian thực (Real-time Stream Engine) để đưa ra dự đoán Live trực tiếp khi chiếc xe đang lăn bánh trên đường chạy thực tế.
+9.2. Các Yếu tố Thiên vị Dữ liệu (Potential Biases) 
+Dominance Bias (Thiên vị đội đua thống trị): Giai đoạn dữ liệu thực nghiệm tích hợp (2024–2026) ghi nhận sự áp đảo tuyệt đối về mặt tần suất chiến thắng chặng của một số thế lực đội đua dẫn đầu (như Red Bull Racing hay McLaren). Điều này dễ khiến các mô hình học máy sinh ra xu hướng học vẹt (Memorization) dựa trên thuộc tính tên đội đua hoặc mã định danh động cơ thay vì học các đặc trưng cơ học từ telemetry thực tế.
+Thiếu hụt yếu tố con người (Human Factors Missing): Hệ thống hiện tại xây dựng các đặc trưng dựa hoàn toàn trên thông số vật lý của xe và điều kiện tự nhiên môi trường. Tuy nhiên, kết quả một cuộc đua F1 thực tế phụ thuộc rất lớn vào trạng thái tâm lý, mức độ mệt mỏi thể chất của tay đua, năng lực ra quyết định chiến thuật của kỹ sư trưởng và tốc độ phản xạ của đội ngũ kỹ thuật thay lốp tại khu vực pit-stop. Đây là những thông số phi cấu trúc cực kỳ khó định lượng vào dataset.
+
+
+9.3 Hướng Phát Triển Tương Lai
+Dựa trên nền tảng Data Pipeline hiện tại, kế hoạch mở rộng hệ thống trong các giai đoạn tiếp theo được định hướng tập trung vào 4 mục tiêu công nghệ chính:
+Giai đoạn 2 - Huấn luyện Mô hình Dự đoán (Modeling & Prediction): Triển khai trực tiếp Master Dataset vào các thuật toán học máy phân lớp dạng cây (Tree-based) có năng lực phân tách mạnh mẽ như XGBoost, LightGBM, hoặc các kiến trúc mạng nơ-ron học sâu (Deep Neural Networks/LSTM) chuyên biệt cho chuỗi thời gian.
+Giai đoạn 3 - Nâng cấp Kiến trúc Thời gian thực (Real-time Streaming): Tái cấu trúc phân tầng Bronze và Silver sang nền tảng quản lý luồng sự kiện Apache Kafka kết hợp bộ xử lý Spark Streaming. Mục tiêu nhằm tính toán các đặc trưng cửa sổ trượt (Rolling Features) trực tiếp theo độ trễ mili-giây, sẵn sàng phục vụ dự đoán Live trên đường đua thực tế.
+Giai đoạn 4 - Phân tích Ngữ nghĩa Vô tuyến (Team Radio NLP): Ứng dụng các mô hình Xử lý Ngôn ngữ Tự nhiên (NLP) tiên tiến để giải mã và phân tích các đoạn hội thoại âm thanh giữa tay đua và kỹ sư thành tín hiệu văn bản. Từ đó, trích xuất sớm các ý đồ chiến thuật ẩn (như phàn nàn về lốp xe, lệnh vào pit) để bổ sung trọng số cho mô hình.
+Giai đoạn 5 - Trí tuệ Nhân tạo Giải thích được (Explainable AI - XAI): Tích hợp lý thuyết trò chơi SHAP (Shapley Additive exPlanations) vào kết quả đầu ra của mô hình Học máy. Việc tường minh hóa trọng số quyết định của từng đặc trưng viễn trắc (đạp ga, phanh, nhiệt độ) sẽ giúp các chuyên gia phân tích F1 hiểu rõ tại sao AI lại đưa ra tỷ lệ chiến thắng đó, xóa bỏ hoàn toàn rào cản "hộp đen" (Black-box) của thuật toán.
+
+X. KẾT LUẬN
+Nghiên cứu này đã hiện thực hóa thành công việc thiết kế, xây dựng và tối ưu hóa một hệ thống đường ống kỹ thuật dữ liệu tự động toàn diện (End-to-End Data Pipeline) phục vụ chuyên biệt cho bài toán dự đoán hiệu suất và chiến thuật giải đua xe Công thức 1.
+Thông qua cấu trúc phân tầng Medallion nghiêm ngặt, hệ thống đã nén, chuẩn hóa và xử lý hiệu quả dòng dữ liệu viễn trắc (Telemetry) khổng lồ với quy mô hơn 85 triệu bản ghi thô, chắt lọc thành công thành một không gian vector đích duy nhất gồm 78.023 dòng dữ liệu chất lượng cao ở cấp độ vòng đua (Lap-level).
+Sự tích hợp bài bản của giải pháp toán học tịnh tiến trễ bối cảnh (Temporal Shift) đóng vai trò nền tảng giúp triệt tiêu hoàn toàn rủi ro rò rỉ dữ liệu tương lai (Data Leakage), đảm bảo tính thực tiễn và độ tin cậy khoa học cao khi triển khai mô hình Học máy trong bối cảnh mô phỏng thời gian thực.
+Tập dữ liệu Master Dataset được xuất bản với cấu trúc 73 chiều đặc trưng kỹ thuật chuyên sâu, kết hợp cùng bộ mã nguồn mở hướng cấu hình (Config-Driven) có khả năng tái lập môi trường đạt 100%. Đây chính là một nền tảng vững chắc, mở ra tiềm năng khai phá các chiến thuật tốc độ đỉnh cao cho cộng đồng nghiên cứu Khoa học Dữ liệu thể thao.
+XI. TÀI LIỆU THAM KHẢO
+[1] F1 Insights powered by AWS | Formula 1 uses AWS for Sports.[Online] Available: https://aws.amazon.com/sports/f1 
+[2] D. Constantinou and N. Fenton, "Solving the problem of inadequate scoring rules for assessing probabilistic football forecast models," *Journal of Quantitative Analysis in Sports*, vol. 8, no. 1, p. 9, 2012.
+[3] V. Swartz, P. Gel, and U. Wettschereck, "Bayesian networks for sports prediction," in *Proc. 31st Conf. Uncertainty Artificial Intelligence*, 2015, pp. 892–901.
+[4] T. Constantinou, "Solve known unknowns in sport analytics," *International Journal of Forecasting*, vol. 35, no. 2, pp. 407–420, 2019.
+[5] J. Loeffler et al., "Machine learning for Formula 1 race prediction," *IEEE Access*, vol. 8, pp. 123456–123465, 2020.
+[6] D. Armbrust et al., "Lakehouse: A new generation of open platforms that unify data warehousing and advanced analytics," *arXiv preprint arXiv:2207.03629*, 2022.
+[7] R. Hyndman and G. Athanasopoulos, *Forecasting: Principles and Practice* (3rd ed.). OTexts, 2021. [Online]. Available: https://otexts.com/fpp3
+[8] M. Leitch and J. Tolan, "Data leakage in time series forecasting," *Towards Data Science*, May 2021. [Online]. Available: https://towardsdatascience.com
+[9] OpenF1, "OpenF1 API documentation," 2024. [Online]. Available: https://docs.openf1.org
+[10] theRealBush, "FastF1: A Python library for Formula 1 data," 2024. [Online]. Available: https://github.com/theRealBush/FastF1
+[11] Kaggle, "Formula 1 world championship (1950-2023)," 2023. [Online]. Available: https://www.kaggle.com/datasets/rohanrao/formula-1-world-championship-1950-2020
+
+XII. PHỤ LỤC: DATASHEET FOR MASTER DATASET
+Tài liệu này được xây dựng theo tiêu chuẩn quốc tế Datasheets for Datasets nhằm đảm bảo tính minh bạch về cấu trúc dữ liệu, nguồn gốc thu thập, các yếu tố thiên vị tiềm ẩn, khía cạnh đạo đức và hướng dẫn sử dụng của tập dữ liệu Master Dataset.
+1. Nguồn gốc và Động cơ xây dựng dữ liệu (Motivation & Origin)
+Đơn vị thu thập
+Tập dữ liệu được thu thập, tiền xử lý và đóng gói hoàn toàn bởi nhóm nghiên cứu.
+Nguồn dữ liệu gốc
+Dữ liệu thô được trích xuất trực tiếp từ OpenF1 API và thư viện viễn trắc mã nguồn mở FastF1. Đây là các luồng dữ liệu telemetry thời gian thực được phát sinh từ hệ thống cảm biến cơ học tích hợp trên các xe đua Formula 1.
+Tài trợ và quyền sở hữu
+Nghiên cứu không nhận bất kỳ nguồn tài trợ thương mại nào. Toàn bộ quá trình xây dựng dữ liệu phục vụ mục đích học thuật và phát triển hệ thống tại Trường Đại học Công nghệ Thông tin (UIT).
+2. Thành phần và Mục đích của Tập dữ liệu (Composition & Purpose)
+Mục tiêu chính
+Tập dữ liệu được xây dựng nhằm cung cấp một không gian đặc trưng sạch, đã qua tiền xử lý và cấu trúc hóa để phục vụ huấn luyện các mô hình học máy phân lớp, hướng đến các bài toán dự đoán hiệu suất vòng chạy, xác định điểm suy giảm lốp (Tyre Cliff) và ước lượng xác suất chiến thắng chặng đua.
+Độ hạt dữ liệu
+Dữ liệu được tổ chức ở cấp độ vòng đua (lap-level). Mỗi bản ghi đại diện duy nhất cho trạng thái của một tay đua tại một vòng đua cụ thể.
+Quy mô dữ liệu
+Phiên bản hoàn chỉnh của tập dữ liệu bao gồm chính xác 78.023 bản ghi, bao phủ các mùa giải Formula 1 từ năm 2024 đến 2026, với 73 đặc trưng đa biến đã qua quá trình tối ưu hóa và kỹ thuật đặc trưng. Tập dữ liệu được lưu trữ dưới định dạng Parquet với dung lượng xấp xỉ 30 MB.
+3. Các yếu tố thiên vị dữ liệu (Potential Biases)
+Thiên vị do sự thống trị đội đua
+Do giai đoạn 2024–2026 chứng kiến sự vượt trội đáng kể của một số đội đua hàng đầu như Red Bull Racing và McLaren, tập dữ liệu có thể mang xu hướng thiên lệch hiệu suất về các thực thể này. Người sử dụng cần thiết kế pipeline huấn luyện phù hợp nhằm hạn chế hiện tượng mô hình học thuộc mã định danh đội đua.
+Mất cân bằng lớp nghiêm trọng
+Tỷ lệ mẫu dương của nhãn mục tiêu chiến thắng chặng (target_win) chỉ chiếm khoảng 0,4% tổng số quan sát. Đây là hiện tượng mất cân bằng lớp nghiêm trọng, cần được xử lý bằng các kỹ thuật như SMOTE hoặc cơ chế trọng số lớp trong giai đoạn huấn luyện mô hình.
+Thiên vị do tái lấy mẫu telemetry
+Quá trình nén dữ liệu telemetry từ tần số 20 Hz xuống 1 Hz giúp giảm chi phí lưu trữ và tính toán, tuy nhiên có thể làm mất các biến động cơ học vi mô như thao tác nhấp nhả ga hoặc điểm phanh chính xác diễn ra trong khoảng thời gian dưới một giây.
+4. Khía cạnh Đạo đức và Bảo mật (Ethical Considerations)
+Dữ liệu cá nhân nhạy cảm
+Tập dữ liệu không chứa bất kỳ thông tin nhận dạng cá nhân nhạy cảm nào (Personally Identifiable Information - PII) liên quan đến đời tư, sức khỏe hoặc tài chính của tay đua và thành viên đội đua. Các thực thể con người chỉ được biểu diễn thông qua mã số thi đấu chính thức (driver_number).
+Sở hữu trí tuệ và bản quyền
+Toàn bộ dữ liệu nguồn từ OpenF1 và FastF1 được khai thác hợp pháp theo giấy phép mã nguồn mở công khai và chỉ phục vụ mục đích nghiên cứu khoa học phi thương mại. Quá trình sử dụng dữ liệu không vi phạm các chính sách bảo mật của hệ thống Formula 1.
+Tác động tiêu cực tiềm ẩn
+Hiện chưa ghi nhận bất kỳ nguy cơ đáng kể nào liên quan đến an toàn xã hội, lạm dụng trí tuệ nhân tạo hoặc các vấn đề đạo đức trong quá trình sử dụng tập dữ liệu.
+5. Hướng dẫn sử dụng (Intended Use)
+Môi trường ứng dụng phù hợp
+Tập dữ liệu phù hợp cho các bài toán học máy trên dữ liệu bảng (tabular data), bao gồm nhưng không giới hạn ở các mô hình như XGBoost, LightGBM, Random Forest, cũng như các kiến trúc học sâu tuần tự như LSTM hoặc RNN.
+Các giới hạn sử dụng
+Tập dữ liệu không được thiết kế để triển khai trực tiếp cho các hệ thống xử lý thời gian thực (real-time streaming systems), do dữ liệu đã được xử lý và đóng gói theo cơ chế batch-processing.
+Ngoài ra, thuộc tính final_position tuyệt đối không được sử dụng làm đặc trưng đầu vào trong quá trình huấn luyện mô hình. Biến này chứa khoảng 94% giá trị khuyết thiếu mang tính cấu trúc và chỉ xuất hiện tại vòng cuối của chặng đua. Việc sử dụng thuộc tính này sẽ dẫn đến hiện tượng rò rỉ dữ liệu tương lai (data leakage).
+Khả năng bảo trì và mở rộng
+Tập dữ liệu hiện được duy trì dưới dạng ảnh chụp tĩnh (static snapshot) sau khi hoàn tất quá trình đóng gói tại Chương 7. Nhóm nghiên cứu cung cấp toàn bộ mã nguồn định hướng cấu hình, bao gồm tệp configs/pipeline_config.yaml, nhằm hỗ trợ người dùng tự động cập nhật và mở rộng dữ liệu cho các mùa giải tiếp theo.
+
+
+

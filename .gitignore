@@ -1,46 +1,79 @@
-# === Python ===
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
 *.egg
 *.egg-info/
-dist/
-build/
 .eggs/
+build/
+dist/
 .Python
-env/
-venv/
-.venv/
-*.env
 
-# === Jupyter Notebooks ===
+# Virtual environments and local environment files
+.venv/
+venv/
+env/
+ENV/
+.env
+.env.*
+
+# Jupyter
 .ipynb_checkpoints/
 
+# Streamlit and local app state
+.streamlit/secrets.toml
 
-# === Mô hình đã huấn luyện ===
-models/*.pkl
-models/*.h5
-models/*.joblib
-
-# === IDE & Editor ===
+# IDE and OS files
 .vscode/
 .idea/
 *.sublime-project
 *.sublime-workspace
-
-# === OS ===
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# === Logging & temp ===
+# Logs, caches, temporary outputs
 *.log
 *.tmp
+*.temp
 .cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tmp_f1_race_replay/
 
-# === Data (QUAN TRỌNG) ===
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
+
+# Trained model artifacts
+models/*.pkl
+models/*.h5
+models/*.joblib
+models/*.onnx
+
+# Data artifacts
+data/raw/
+data/cleaned/
+data/processed/
+data/metadata/
+data/fastf1_cache/
 data/
+
+# Misc generated artifacts
 outputs/
 artifacts/
 .gemini/
+*.zip

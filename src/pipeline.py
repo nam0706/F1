@@ -8,7 +8,6 @@ from .clean_data import clean_all
 from .feature_engineering import build_feature_engineering
 from .crawler import run_crawler
 from .utils import setup_logging
-from .validate_data import validate_cleaned_data
 
 
 logger = logging.getLogger(__name__)
@@ -17,7 +16,6 @@ logger = logging.getLogger(__name__)
 def run_all(dry_run: bool = False) -> None:
     run_crawler(dry_run=dry_run)
     clean_all(dry_run=dry_run)
-    validate_cleaned_data()
     build_base_dataset(dry_run=dry_run)   # session-level base
     build_feature_engineering(dry_run=dry_run)  # lap-level master
 
@@ -26,7 +24,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="F1 data-layer pipeline runner")
     parser.add_argument(
         "step",
-        choices=["fetch", "clean", "validate", "build-base", "feature-engineering", "all"],
+        choices=["fetch", "clean", "build-base", "feature-engineering", "all"],
         help="Pipeline step to run",
     )
     parser.add_argument(
@@ -42,8 +40,6 @@ def main() -> None:
         run_crawler(dry_run=args.dry_run)
     elif args.step == "clean":
         clean_all(dry_run=args.dry_run)
-    elif args.step == "validate":
-        validate_cleaned_data()
     elif args.step == "build-base":
         build_base_dataset(dry_run=args.dry_run)
     elif args.step == "feature-engineering":

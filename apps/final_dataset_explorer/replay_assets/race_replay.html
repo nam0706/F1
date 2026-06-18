@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0b0d10;
+      color: #f4f4f5;
+    }
+    body {
+      margin: 0;
+      background: #0b0d10;
+    }
+    .wrap {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px;
+      min-height: 720px;
+      padding: 12px;
+      box-sizing: border-box;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      background: #151922;
+      border: 1px solid #2a3140;
+      border-radius: 8px;
+    }
+    button, select {
+      height: 34px;
+      border-radius: 6px;
+      border: 1px solid #3a4354;
+      background: #202636;
+      color: #f4f4f5;
+      padding: 0 12px;
+      font-weight: 600;
+    }
+    button.primary {
+      background: #e10600;
+      border-color: #ff3b35;
+      color: white;
+    }
+    input[type="range"] {
+      flex: 1;
+      min-width: 180px;
+    }
+    .metric {
+      color: #a8b3c7;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .sectorLegend {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-left: auto;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    .canvasBox {
+      position: relative;
+      background: radial-gradient(circle at top left, #171c26, #080a0d 68%);
+      border: 1px solid #2a3140;
+      border-radius: 8px;
+      min-height: 560px;
+      overflow: hidden;
+    }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    .tooltip {
+      position: absolute;
+      display: none;
+      pointer-events: none;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: rgba(10, 12, 16, 0.92);
+      border: 1px solid #3a4354;
+      color: #f4f4f5;
+      font-size: 12px;
+      line-height: 1.35;
+      max-width: 240px;
+      z-index: 5;
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      padding: 8px 2px;
+      color: #cbd5e1;
+      font-size: 12px;
+    }
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+    .leaderboard {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 292px;
+      max-height: calc(100% - 24px);
+      overflow: hidden;
+      border: 1px solid rgba(58, 67, 84, 0.95);
+      border-radius: 8px;
+      background: rgba(10, 12, 16, 0.82);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+      z-index: 4;
+    }
+    .chartPanel {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      width: 300px;
+      border: 1px solid rgba(58, 67, 84, 0.95);
+      border-radius: 8px;
+      background: rgba(10, 12, 16, 0.82);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+      z-index: 4;
+      overflow: hidden;
+    }
+    .chartPanel h3 {
+      margin: 0;
+      padding: 9px 10px;
+      background: #202636;
+      color: white;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(58, 67, 84, 0.95);
+    }
+    .chartMeta {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px 0;
+      color: #a8b3c7;
+      font-size: 12px;
+    }
+    #speedChart {
+      width: 100%;
+      height: 190px;
+      display: block;
+    }
+    .leaderboard h3 {
+      margin: 0;
+      padding: 9px 10px;
+      background: #e10600;
+      color: white;
+      font-size: 12px;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .lbList {
+      display: grid;
+      gap: 0;
+    }
+    .lbRow {
+      display: grid;
+      grid-template-columns: 34px 1fr 46px 44px;
+      gap: 8px;
+      align-items: center;
+      min-height: 34px;
+      padding: 5px 10px;
+      border-top: 1px solid rgba(58, 67, 84, 0.65);
+      color: #dbe4f0;
+      font-size: 12px;
+    }
+    .lbPos {
+      font-weight: 800;
+      color: #fff;
+    }
+    .lbName {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+    .lbMeta {
+      color: #a8b3c7;
+      text-align: right;
+      white-space: nowrap;
+    }
+    @media (max-width: 900px) {
+      .leaderboard {
+        position: static;
+        width: auto;
+        max-height: 260px;
+        margin: 8px;
+      }
+      .chartPanel {
+        position: static;
+        width: auto;
+        margin: 8px;
+      }
+      .canvasBox {
+        min-height: 720px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="toolbar">
+      <button id="play" class="primary">Play</button>
+      <button id="reset">Reset</button>
+      <label class="metric">Speed</label>
+      <select id="speed">
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+        <option value="8">8x</option>
+      </select>
+      <input id="timeline" type="range" min="0" max="0" value="0" />
+      <span id="time" class="metric">00:00</span>
+      <span id="frameInfo" class="metric"></span>
+      <span class="sectorLegend">
+        <span><i class="dot" style="background:#e10600"></i>S1</span>
+        <span><i class="dot" style="background:#1f77ff"></i>S2</span>
+        <span><i class="dot" style="background:#ffd400"></i>S3</span>
+      </span>
+    </div>
+    <div class="canvasBox">
+      <canvas id="replay"></canvas>
+      <div id="tooltip" class="tooltip"></div>
+      <div class="chartPanel">
+        <h3>Speed Trend</h3>
+        <div class="chartMeta">
+          <span id="chartTime">00:00</span>
+          <span>km/h</span>
+        </div>
+        <canvas id="speedChart"></canvas>
+      </div>
+      <div class="leaderboard">
+        <h3>Leaderboard</h3>
+        <div id="leaderboard" class="lbList"></div>
+      </div>
+    </div>
+    <div id="legend" class="legend"></div>
+  </div>
+
+  <script>
+    const payload = __REPLAY_PAYLOAD__;
+    const canvas = document.getElementById("replay");
+    const ctx = canvas.getContext("2d");
+    const tooltip = document.getElementById("tooltip");
+    const leaderboardEl = document.getElementById("leaderboard");
+    const speedChart = document.getElementById("speedChart");
+    const speedCtx = speedChart.getContext("2d");
+    const chartTime = document.getElementById("chartTime");
+    const playBtn = document.getElementById("play");
+    const resetBtn = document.getElementById("reset");
+    const speedSelect = document.getElementById("speed");
+    const timeline = document.getElementById("timeline");
+    const timeEl = document.getElementById("time");
+    const frameInfo = document.getElementById("frameInfo");
+    const legend = document.getElementById("legend");
+
+    const frames = payload.frames || [];
+    const track = payload.track || [];
+    const trackLine = payload.track_line || [];
+    const bounds = payload.bounds || {};
+    const driverColors = {};
+    const palette = ["#E10600", "#1f77b4", "#2ca02c", "#ff7f0e", "#9467bd", "#17becf", "#bcbd22", "#e377c2", "#8c564b", "#7f7f7f", "#00d084", "#ff4dd2", "#ffd23f", "#3ddc97", "#f72585", "#4cc9f0", "#b5179e", "#7209b7", "#4895ef", "#560bad"];
+    const sectorColors = {
+      1: "#e10600",
+      2: "#1f77ff",
+      3: "#ffd400",
+    };
+    (payload.drivers || []).forEach((d, i) => driverColors[d.driver_number] = palette[i % palette.length]);
+
+    let currentFrame = 0;
+    let playing = false;
+    let lastTs = null;
+    let accumulator = 0;
+    let hitBoxes = [];
+    let projectedTrack = [];
+    let projectedTrackLine = [];
+    let speedSeries = {};
+
+    timeline.max = Math.max(frames.length - 1, 0);
+    frameInfo.textContent = `${frames.length} frames | ${payload.drivers.length} drivers`;
+    legend.innerHTML = (payload.drivers || []).map(d => `<span><i class="dot" style="background:${driverColors[d.driver_number]}"></i>${d.label}</span>`).join("");
+
+    function resizeCanvas() {
+      const box = canvas.parentElement;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(box.clientWidth * dpr);
+      canvas.height = Math.floor(box.clientHeight * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      speedChart.width = Math.floor(speedChart.clientWidth * dpr);
+      speedChart.height = Math.floor(speedChart.clientHeight * dpr);
+      speedCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      projectedTrack = track.map(p => project(p.x, p.y));
+      projectedTrackLine = trackLine.map(p => ({...project(p.x, p.y), sector: p.sector || 1}));
+      draw();
+    }
+
+    function fmtTime(seconds) {
+      seconds = Math.max(0, Math.round(seconds || 0));
+      const h = Math.floor(seconds / 3600);
+      const m = Math.floor((seconds % 3600) / 60);
+      const s = seconds % 60;
+      if (h > 0) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function project(x, y) {
+      const pad = 36;
+      const w = canvas.clientWidth - pad * 2;
+      const h = canvas.clientHeight - pad * 2;
+      const minX = bounds.min_x ?? 0, maxX = bounds.max_x ?? 1;
+      const minY = bounds.min_y ?? 0, maxY = bounds.max_y ?? 1;
+      const sx = w / Math.max(1, maxX - minX);
+      const sy = h / Math.max(1, maxY - minY);
+      const scale = Math.min(sx, sy);
+      const trackW = (maxX - minX) * scale;
+      const trackH = (maxY - minY) * scale;
+      const ox = pad + (w - trackW) / 2;
+      const oy = pad + (h - trackH) / 2;
+      return {
+        x: ox + (x - minX) * scale,
+        y: canvas.clientHeight - (oy + (y - minY) * scale)
+      };
+    }
+
+    function drawTrack() {
+      if (projectedTrackLine.length > 2) {
+        drawContinuousTrack(projectedTrackLine);
+        return;
+      }
+      ctx.save();
+      const radius = projectedTrack.length > 5000 ? 0.9 : 1.2;
+      ctx.fillStyle = projectedTrack.length > 5000 ? "rgba(141, 211, 255, 0.18)" : "rgba(141, 211, 255, 0.24)";
+      for (const p of projectedTrack) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawContinuousTrack(points) {
+      ctx.save();
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(4, 7, 12, 0.86)";
+      ctx.lineWidth = 18;
+      strokePolyline(points, true);
+      strokeSectorPaths(points, 13, 0.56);
+      strokeSectorPaths(points, 4, 1);
+      ctx.restore();
+    }
+
+    function rgba(hex, alpha) {
+      const value = hex.replace("#", "");
+      const r = parseInt(value.slice(0, 2), 16);
+      const g = parseInt(value.slice(2, 4), 16);
+      const b = parseInt(value.slice(4, 6), 16);
+      return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function strokeSectorPaths(points, width, alpha) {
+      if (points.length < 2) return;
+      ctx.lineWidth = width;
+      for (const sector of [1, 2, 3]) {
+        ctx.strokeStyle = rgba(sectorColors[sector], alpha);
+        ctx.beginPath();
+        let drawing = false;
+        for (let i = 1; i < points.length; i++) {
+          const a = points[i - 1];
+          const b = points[i];
+          if (Number(b.sector) !== sector) {
+            drawing = false;
+            continue;
+          }
+          if (!drawing) {
+            ctx.moveTo(a.x, a.y);
+            drawing = true;
+          }
+          ctx.lineTo(b.x, b.y);
+        }
+        const first = points[0];
+        const last = points[points.length - 1];
+        if (Number(first.sector) === sector) {
+          if (!drawing) ctx.moveTo(last.x, last.y);
+          ctx.lineTo(first.x, first.y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    function strokePolyline(points, closePath) {
+      if (points.length < 2) return;
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 0; i < points.length; i++) {
+        const p = points[i];
+        ctx.lineTo(p.x, p.y);
+      }
+      if (closePath) ctx.closePath();
+      ctx.stroke();
+    }
+
+    function drawCars(frame) {
+      hitBoxes = [];
+      if (!frame) return;
+      for (const car of frame.cars) {
+        const p = project(car.x, car.y);
+        const color = driverColors[car.d] || "#E10600";
+        ctx.save();
+        ctx.shadowColor = "rgba(255,255,255,0.35)";
+        ctx.shadowBlur = 8;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#f8fafc";
+        ctx.font = "700 11px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText(car.d, p.x, p.y - 12);
+        ctx.restore();
+        hitBoxes.push({ x: p.x, y: p.y, r: 12, car });
+      }
+    }
+
+    function buildSpeedSeries() {
+      const series = {};
+      for (const frame of frames) {
+        for (const row of frame.leaderboard || []) {
+          if (row.speed == null) continue;
+          if (!series[row.driver]) series[row.driver] = [];
+          series[row.driver].push({ t: frame.t, speed: Number(row.speed) });
+        }
+      }
+      return series;
+    }
+
+    function drawSpeedChart(frameIndex) {
+      const w = speedChart.clientWidth;
+      const h = speedChart.clientHeight;
+      speedCtx.clearRect(0, 0, w, h);
+      speedCtx.save();
+      speedCtx.fillStyle = "rgba(255,255,255,0.04)";
+      speedCtx.fillRect(0, 0, w, h);
+
+      const padL = 34;
+      const padR = 10;
+      const padT = 12;
+      const padB = 24;
+      const currentT = frames[frameIndex]?.t ?? 0;
+      const windowSec = 180;
+      const minT = Math.max(0, currentT - windowSec);
+      const maxT = Math.max(windowSec, currentT);
+
+      const visible = [];
+      for (const points of Object.values(speedSeries)) {
+        for (const p of points) {
+          if (p.t >= minT && p.t <= maxT) visible.push(p.speed);
+        }
+      }
+      const minSpeed = Math.max(0, Math.floor((Math.min(...visible, 80) - 10) / 10) * 10);
+      const maxSpeed = Math.ceil((Math.max(...visible, 320) + 10) / 10) * 10;
+
+      speedCtx.strokeStyle = "rgba(168,179,199,0.28)";
+      speedCtx.lineWidth = 1;
+      speedCtx.beginPath();
+      speedCtx.moveTo(padL, padT);
+      speedCtx.lineTo(padL, h - padB);
+      speedCtx.lineTo(w - padR, h - padB);
+      speedCtx.stroke();
+
+      speedCtx.fillStyle = "#a8b3c7";
+      speedCtx.font = "10px Inter, sans-serif";
+      speedCtx.fillText(String(maxSpeed), 6, padT + 4);
+      speedCtx.fillText(String(minSpeed), 6, h - padB);
+
+      for (const [driver, points] of Object.entries(speedSeries)) {
+        const color = driverColors[driver] || "#94a3b8";
+        const visiblePoints = points.filter(p => p.t >= minT && p.t <= maxT);
+        if (visiblePoints.length < 2) continue;
+        speedCtx.strokeStyle = color;
+        speedCtx.lineWidth = 1.8;
+        speedCtx.beginPath();
+        visiblePoints.forEach((p, i) => {
+          const x = padL + ((p.t - minT) / Math.max(1, maxT - minT)) * (w - padL - padR);
+          const y = padT + (1 - ((p.speed - minSpeed) / Math.max(1, maxSpeed - minSpeed))) * (h - padT - padB);
+          if (i === 0) speedCtx.moveTo(x, y);
+          else speedCtx.lineTo(x, y);
+        });
+        speedCtx.stroke();
+      }
+
+      speedCtx.strokeStyle = "rgba(255,255,255,0.75)";
+      const cursorX = padL + ((currentT - minT) / Math.max(1, maxT - minT)) * (w - padL - padR);
+      speedCtx.beginPath();
+      speedCtx.moveTo(cursorX, padT);
+      speedCtx.lineTo(cursorX, h - padB);
+      speedCtx.stroke();
+      speedCtx.restore();
+      chartTime.textContent = fmtTime(currentT);
+    }
+
+    function renderLeaderboard(frame) {
+      const rows = (frame?.leaderboard || []).slice(0, 20);
+      leaderboardEl.innerHTML = rows.map(row => {
+        const color = driverColors[row.driver] || "#94a3b8";
+        const speed = row.speed == null ? "" : `${row.speed} km/h`;
+        const compound = row.compound == null ? "" : row.compound;
+        return `
+          <div class="lbRow">
+            <span class="lbPos" style="border-left:4px solid ${color}; padding-left:6px;">P${row.position}</span>
+            <span class="lbName">${row.label}</span>
+            <span class="lbMeta">${speed}</span>
+            <span class="lbMeta">${compound}</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      if (!frames.length) {
+        ctx.fillStyle = "#cbd5e1";
+        ctx.font = "16px Inter, sans-serif";
+        ctx.fillText("No replay frames available for this selection.", 24, 36);
+        return;
+      }
+      drawTrack();
+      drawCars(frames[currentFrame]);
+      drawSpeedChart(currentFrame);
+      renderLeaderboard(frames[currentFrame]);
+      timeline.value = currentFrame;
+      timeEl.textContent = fmtTime(frames[currentFrame].t);
+    }
+
+    function step(ts) {
+      if (!playing) return;
+      if (lastTs == null) lastTs = ts;
+      const dt = ts - lastTs;
+      lastTs = ts;
+      accumulator += dt * Number(speedSelect.value || 1);
+      const frameDuration = 90;
+      while (accumulator >= frameDuration) {
+        accumulator -= frameDuration;
+        currentFrame += 1;
+        if (currentFrame >= frames.length) {
+          currentFrame = frames.length - 1;
+          playing = false;
+          playBtn.textContent = "Play";
+          break;
+        }
+      }
+      draw();
+      if (playing) requestAnimationFrame(step);
+    }
+
+    playBtn.addEventListener("click", () => {
+      if (!frames.length) return;
+      playing = !playing;
+      playBtn.textContent = playing ? "Pause" : "Play";
+      lastTs = null;
+      if (playing) requestAnimationFrame(step);
+    });
+
+    resetBtn.addEventListener("click", () => {
+      playing = false;
+      playBtn.textContent = "Play";
+      currentFrame = 0;
+      accumulator = 0;
+      draw();
+    });
+
+    timeline.addEventListener("input", () => {
+      playing = false;
+      playBtn.textContent = "Play";
+      currentFrame = Number(timeline.value);
+      draw();
+    });
+
+    canvas.addEventListener("mousemove", (ev) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = ev.clientX - rect.left;
+      const y = ev.clientY - rect.top;
+      const hit = hitBoxes.find(h => Math.hypot(h.x - x, h.y - y) <= h.r);
+      if (!hit) {
+        tooltip.style.display = "none";
+        return;
+      }
+      tooltip.innerHTML = `${hit.car.label}<br>P${hit.car.position ?? "?"} | Lap ${hit.car.lap ?? "?"}<br>${hit.car.compound ?? ""}<br>${hit.car.status ?? ""}`;
+      tooltip.style.left = `${x + 14}px`;
+      tooltip.style.top = `${y + 14}px`;
+      tooltip.style.display = "block";
+    });
+
+    canvas.addEventListener("mouseleave", () => tooltip.style.display = "none");
+    window.addEventListener("resize", resizeCanvas);
+    speedSeries = buildSpeedSeries();
+    resizeCanvas();
+  </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Driver Session Base Dataset
 
-Rows: 1,486
+Rows: 3,717
 
 Columns: 42
 
